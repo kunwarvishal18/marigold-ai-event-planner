@@ -119,7 +119,18 @@ npm run test:e2e       # Playwright; MG_TARGET=modular or MG_TARGET=standalone t
 
 GitHub Actions (`.github/workflows/ci.yml`) runs `npm test` on every push to `main`.
 
-Browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`), so they check Marigold's own logic and safety handling, not the quality of real Claude answers. See [TESTING.md](TESTING.md) for the latest executed results, what is not verified, and a manual checklist for testing with real Claude.
+### Latest results (2026-10-28)
+
+| Check | Result |
+| --- | --- |
+| ESLint | No problems |
+| Unit tests (`node:test`) | 35 / 35 passed |
+| Browser tests, modular app | 85 / 85 passed |
+| Browser tests, single-file build | 85 / 85 passed |
+| GitHub Actions CI | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583) on its first run |
+| Manual checklist with real Claude in the live Artifact (13 items) | All passed, run by the project owner |
+
+Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`), so they check Marigold's own logic and safety handling. The behaviour with real Claude (generation, co-planner edits with approval, prompt-injection attempt, optimizer, ideas, AI risk review, exports, stale replies and phone-sized screens) was checked by hand in the live Artifact. See [TESTING.md](TESTING.md) for every check, what is not verified, and the manual checklist.
 
 ## Typical workflows
 
@@ -155,7 +166,7 @@ Browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`),
 - No live data: Marigold does not look up real vendors, prices, availability or weather.
 - jsPDF is loaded from cdnjs without a Subresource Integrity hash, because the exact CDN bytes could not be verified from the build environment. PDF export needs network access to cdnjs.
 - Prompt-injection fencing reduces risk but cannot guarantee Claude ignores every instruction in user text; code-side validation and user approval are the controls that matter.
-- Automated tests use a Claude mock. Real Claude output quality has to be checked manually (see TESTING.md).
+- Automated tests use a Claude mock. Real Claude was checked by hand with a 13-item checklist (all passed); Claude's rate limits and how often real answers need the automatic retry were not measured.
 
 ## Deployment
 
