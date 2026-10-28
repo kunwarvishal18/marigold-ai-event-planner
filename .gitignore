@@ -1,5 +1,5 @@
 # Dependencies (dev-only: Playwright, axe-core, jsPDF copy for offline tests)
-node_modules/
+node_modules
 
 # Test output and local reports
 test-results/
