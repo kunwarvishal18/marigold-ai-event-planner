@@ -169,6 +169,6 @@ Captured from the running app with Playwright (template and example data, no rea
 
 ## Author and acknowledgements
 
-- Author: _to be filled in by the project owner_
+- Author: Vishal Kunwar 
 - Built for Hack2Skill Virtual PromptWars (Challenge 5), with Claude used as the in-app planning model and as a coding assistant.
 - jsPDF (MIT) for PDF export; Playwright and axe-core for testing.
