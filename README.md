@@ -72,7 +72,7 @@ docs/screenshots/     screenshots captured from the running app
 
 - HTML, CSS and vanilla JavaScript (ES2022, native ES modules). No runtime dependencies or framework.
 - Claude through the claude.ai Artifact runtime (`sample` and `downloads` capabilities). No API key is used or stored anywhere.
-- jsPDF 2.5.1, loaded from cdnjs only when a PDF is exported.
+- jsPDF 2.5.1, loaded from cdnjs only when a PDF is exported, pinned with a Subresource Integrity (SHA-384) hash and `crossorigin="anonymous"`.
 - Dev only: Node.js 18+, Playwright, axe-core, and a local jsPDF copy for offline tests.
 
 ## Install
@@ -124,9 +124,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs `npm test` on every push to `ma
 | Check | Result |
 | --- | --- |
 | ESLint | No problems |
-| Unit tests (`node:test`) | 35 / 35 passed |
-| Browser tests, modular app | 85 / 85 passed |
-| Browser tests, single-file build | 85 / 85 passed |
+| Unit tests (`node:test`) | 36 / 36 passed |
+| Browser tests, modular app | 86 / 86 passed |
+| Browser tests, single-file build | 86 / 86 passed |
 | GitHub Actions CI | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583) on its first run |
 | Manual checklist with real Claude in the live Artifact (13 items) | All passed, run by the project owner |
 
@@ -145,6 +145,7 @@ Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-cl
 
 - **No secrets:** no API keys or credentials anywhere in the code. Claude access comes from the viewer's own claude.ai session.
 - **Content-Security-Policy:** the hosted and single-file builds only run Marigold's own script (the single-file build allows it by SHA-256 hash) plus jsPDF from cdnjs, with fonts from Google Fonts; no plugins, no form posts, and no fetch or XHR connections (`connect-src 'none'`). A browser test confirms an injected script is blocked. The Artifact build uses claude.ai's own policy.
+- **Subresource Integrity:** the jsPDF script tag carries a pinned SHA-384 hash, so the browser refuses it if the CDN file is ever changed. The hash is the hash of the npm `jspdf@2.5.1` file (checked by a unit test), CI checks it against the live cdnjs file on every run, and a browser test confirms a tampered copy is blocked and PDF export fails safely with an error message.
 - **No backend:** all data stays in the browser's localStorage on the user's device.
 - **Approval before change:** Claude can only propose edits. Nothing is applied without the user pressing *Apply*, and every applied change can be undone.
 - **Untrusted AI output:** size-capped, parsed defensively, validated against schemas, retried once, and rendered only as escaped text (never as HTML).
@@ -164,7 +165,7 @@ Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-cl
 - Claude features only work inside claude.ai as an Artifact. Elsewhere the app runs in template mode.
 - Plans are stored per browser and device; there is no sync or sharing beyond exports.
 - No live data: Marigold does not look up real vendors, prices, availability or weather.
-- jsPDF is loaded from cdnjs without a Subresource Integrity hash, because the exact CDN bytes could not be verified from the build environment. PDF export needs network access to cdnjs.
+- PDF export needs network access to cdnjs. jsPDF is not bundled, to keep the app small; it is integrity-checked instead.
 - Prompt-injection fencing reduces risk but cannot guarantee Claude ignores every instruction in user text; code-side validation and user approval are the controls that matter.
 - Automated tests use a Claude mock. Real Claude was checked by hand with a 13-item checklist (all passed); Claude's rate limits and how often real answers need the automatic retry were not measured.
 

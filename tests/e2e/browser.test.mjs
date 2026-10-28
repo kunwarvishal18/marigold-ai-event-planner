@@ -70,7 +70,7 @@ async function suite(b, URL, ok) {
   await ctx.close();
 
   // ---------- 2. With Claude stand-in ----------
-  ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await ctx.addInitScript(MOCK); await ctx.route('https://cdnjs.cloudflare.com/**', r => r.fulfill({ path: JSPDF, contentType: 'application/javascript' })); pg = await ctx.newPage();
+  ctx = await b.newContext({ viewport: { width: 1280, height: 900 } }); await ctx.addInitScript(MOCK); await ctx.route('https://cdnjs.cloudflare.com/**', r => r.fulfill({ path: JSPDF, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' } })); pg = await ctx.newPage();
   const errs2 = []; pg.on('pageerror', e => errs2.push(e.message));
   await pg.goto(URL); await pg.waitForFunction(() => document.querySelector('#aiText').textContent === 'Claude connected');
   ok('Connected status shown', true);
@@ -208,7 +208,7 @@ async function suite(b, URL, ok) {
 async function hardening(b, URL, ok) {
   const fresh = async (init, mock = false, opts = {}) => {
     const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, ...opts });
-    if (mock) { await ctx.addInitScript(MOCK); await ctx.route("https://cdnjs.cloudflare.com/**", r => r.fulfill({ path: JSPDF, contentType: "application/javascript" })); }
+    if (mock) { await ctx.addInitScript(MOCK); await ctx.route("https://cdnjs.cloudflare.com/**", r => r.fulfill({ path: JSPDF, contentType: "application/javascript", headers: { "Access-Control-Allow-Origin": "*" } })); }
     // Seed storage once per context (sessionStorage flag), so reloads see what the app wrote.
     if (init) await ctx.addInitScript(([seed]) => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); for (const [k, v] of Object.entries(seed)) localStorage.setItem(k, v); } }, [init]);
     const pg = await ctx.newPage(); const errs = []; pg.on("pageerror", e => errs.push(e.message));
@@ -280,6 +280,15 @@ async function hardening(b, URL, ok) {
   ok("A reply that arrives after switching plans is discarded (no proposal, no change)", st.cur && st.chat === 0 && !st.proposal && !st.busy && !st.drone, JSON.stringify(st));
   await pg.evaluate(() => { window.__mode.delay = 30; });
   ok("No page errors (AI safety run)", !errs.length, errs.join(" | ")); await ctx.close();
+
+  // 4b. Subresource Integrity: a jsPDF file that doesn't match the pinned hash is refused.
+  ({ ctx, pg, errs } = await fresh(null, true));
+  await pg.route("https://cdnjs.cloudflare.com/**", r => r.fulfill({ body: fs.readFileSync(JSPDF, "utf8") + "\n;window.__tampered = 1;", contentType: "application/javascript", headers: { "Access-Control-Allow-Origin": "*" } }));
+  await pg.click("#openSample"); await pg.waitForTimeout(150);
+  await pg.click("#exportBox summary"); await pg.click('[data-exp="pdf"]'); await pg.waitForTimeout(1500);
+  const sri = await pg.evaluate(() => ({ ran: !!window.__tampered, jspdf: !!window.jspdf, pdf: window.__saved.some(x => x.filename.endsWith(".pdf")), toast: document.querySelector("#toast").textContent, role: document.querySelector("#toast").getAttribute("role") }));
+  ok("A tampered jsPDF file is blocked by its integrity hash; no PDF, clear error", !sri.ran && !sri.jspdf && !sri.pdf && sri.role === "alert", JSON.stringify(sri));
+  await ctx.close();
 
   // 5. Content-Security-Policy is active, and the "Do next" planner explains its picks.
   ({ ctx, pg, errs } = await fresh());

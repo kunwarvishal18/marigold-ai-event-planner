@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- Content-Security-Policy for hosted copies. The build swaps 'self' in script-src for a hash of the inlined script. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-zZKS7KLbY3fzDoLCPH9A9UyGkA2Af6ljQjZ1yxxQreU=' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-wOuZwumCU1V03FWILqYOoCrtpijjHhD1cuYEXvtVsHE=' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Marigold Event Planner</title>
@@ -530,6 +530,12 @@ function extractJSON(text) {
   try { return JSON.parse(t.slice(a, b + 1)); } catch { return undefined; }
 }
 
+/* jsPDF is loaded from cdnjs only when a PDF is exported. The browser checks the file against this
+   Subresource Integrity hash (SHA-384 of the npm jspdf@2.5.1 dist file) and refuses to run anything else.
+   CI re-checks the hash against the live CDN file: scripts/verify-sri.mjs. */
+const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+const JSPDF_SRI = "sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk";
+
 /* Replies longer than this are rejected before parsing, to bound memory and CPU use. */
 const MAX_REPLY_CHARS = 200000;
 
@@ -702,7 +708,7 @@ function fileBase() { return (S.plan.brief.name || "event").replace(/[^\w\- ]+/g
 let jsPdfLoading = null;
 function loadJsPDF() {
   if (window.jspdf) return Promise.resolve(window.jspdf);
-  return jsPdfLoading ||= new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; s.onload = () => window.jspdf ? res(window.jspdf) : rej(new Error("jsPDF missing")); s.onerror = () => { jsPdfLoading = null; rej(new Error("load failed")); }; document.head.append(s); });
+  return jsPdfLoading ||= new Promise((res, rej) => { const s = document.createElement("script"); s.src = JSPDF_URL; s.integrity = JSPDF_SRI; s.crossOrigin = "anonymous"; s.referrerPolicy = "no-referrer"; s.onload = () => window.jspdf ? res(window.jspdf) : rej(new Error("jsPDF missing")); s.onerror = () => { jsPdfLoading = null; rej(new Error("load failed")); }; document.head.append(s); });
 }
 // eslint-disable-next-line no-control-regex -- keeps tab, LF and CR on purpose; strips other characters the PDF font cannot draw
 function pdfSafe(s) { return String(s ?? "").replace(/₹/g, "INR ").replace(/[‐-―]/g, "-").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…/g, "...").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF€]/g, ""); }

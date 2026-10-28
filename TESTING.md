@@ -23,9 +23,9 @@ Run on 2026-10-28 in a Linux container: Node v22.22.0, Playwright 1.63.0 with Ch
 | --- | --- |
 | ESLint | No problems |
 | `build:check` (dist matches source) | Passed |
-| Unit tests (`node:test`) | **35 / 35 passed** |
-| Browser tests, modular app over HTTP | **85 / 85 passed** |
-| Browser tests, single-file build over `file://` | **85 / 85 passed** |
+| Unit tests (`node:test`) | **36 / 36 passed** |
+| Browser tests, modular app over HTTP | **86 / 86 passed** |
+| Browser tests, single-file build over `file://` | **86 / 86 passed** |
 | `npm test` exit code | 0 |
 
 These numbers come from the run itself. If you change code, rerun `npm test` rather than relying on this table.
@@ -34,7 +34,7 @@ These numbers come from the run itself. If you change code, rerun `npm test` rat
 
 The browser tests replace the claude.ai runtime with `tests/e2e/mock-claude.js`, a **mock** that returns canned JSON (and deliberately broken JSON, rate-limit errors, circular dependencies, oversized replies, slow replies, HTML-injection strings and arithmetic slips). The tests therefore verify Marigold's own handling: validation, retries, maths, scheduling, approvals, undo, persistence, rendering and safety. **They say nothing about the quality of real Claude answers.**
 
-PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of the cdnjs URL, because cdnjs is not reachable from the test environment.
+PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of the cdnjs URL, because cdnjs is not reachable from the test environment. The served copy has CORS headers, as the integrity-checked `crossorigin` load requires. A second check serves a tampered copy and confirms the browser blocks it, no PDF is saved and an error alert is shown.
 
 ### Unit tests (tests/unit/core.test.js, tests/unit/advisor.test.js)
 
@@ -194,7 +194,7 @@ PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of th
 
 - **Real Claude output in automated tests.** No automated test calls Claude. The manual checklist below was run with real Claude by the project owner on 2026-10-28 and reported as passing; latency and how often real answers need the retry were not measured.
 - **The published Artifact runtime.** Permission prompts, downloads and exports were covered by the owner's manual checklist (below); rate limits in claude.ai were not exercised.
-- **PDF export from cdnjs.** Tested only with a local copy of the same version; the CDN bytes could not be fetched here.
+- **PDF export from cdnjs.** The browser tests use a local copy of the same version. That the live cdnjs file matches the pinned hash is checked by `scripts/verify-sri.mjs` in CI (GitHub Actions), not in this sandbox, where cdnjs is blocked.
 - **Browsers other than Chromium** (Firefox, Safari) and real phones.
 - **Screen readers.** Roles, labels and live regions are in place and axe passes, but no manual NVDA/VoiceOver/TalkBack session was run. Automated checks cover only part of WCAG 2.2 AA.
 - **Storage quota exhaustion** fallback (trimming undo history) is in code but not forced in a test.

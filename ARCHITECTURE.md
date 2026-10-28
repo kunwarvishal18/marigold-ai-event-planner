@@ -41,7 +41,7 @@ flowchart TD
   CLAUDE[("Claude via window.claude.use('sample')")]
   DL[("Downloads via window.claude.use('downloads')")]
   LS[("localStorage mg2.*")]
-  CDN[("cdnjs: jsPDF 2.5.1, loaded only on PDF export")]
+  CDN[("cdnjs: jsPDF 2.5.1, SRI-pinned, loaded only on PDF export")]
 
   APP --> AI --> CLAUDE
   AI --> SAFE
@@ -133,6 +133,8 @@ The bundler orders modules by their imports, strips `import`/`export`, refuses d
 ## Security headers
 
 `index.html` sets a Content-Security-Policy: scripts only from the page itself and cdnjs (for jsPDF), styles from the page and Google Fonts, no plugins, no form posts, no fetch or XHR connections, and no `<base>` changes. The build replaces `'self'` in `script-src` with the SHA-256 hash of the inlined script for `dist/marigold-standalone.html`. The Artifact build leaves the policy out because claude.ai sets its own.
+
+jsPDF is loaded with a Subresource Integrity hash (`JSPDF_SRI` in `js/safety.js`), `crossorigin="anonymous"` and `referrerpolicy="no-referrer"`, in both builds. `scripts/verify-sri.mjs` runs in CI and fails the build if the live cdnjs file no longer matches the pinned hash.
 
 ## Efficiency
 

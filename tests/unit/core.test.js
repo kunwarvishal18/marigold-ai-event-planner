@@ -9,7 +9,10 @@ import { analyze } from "../../js/risks.js";
 import { buildPlan } from "../../js/model.js";
 import { templateData, SCEN, scenBrief } from "../../js/templates.js";
 import { validateGen, validateChat, validateBudgetOpt } from "../../js/validation.js";
-import { extractJSON, fence, DATA_RULE, MAX_REPLY_CHARS } from "../../js/safety.js";
+import { extractJSON, fence, DATA_RULE, MAX_REPLY_CHARS, JSPDF_URL, JSPDF_SRI } from "../../js/safety.js";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
 const total = a => a.reduce((x, y) => x + y, 0);
 // Deterministic pseudo-random numbers so failures are reproducible.
@@ -185,4 +188,11 @@ test("fence wraps user text and neutralises attempts to close the data block", (
 test("esc escapes every HTML-significant character; hasOwn ignores the prototype", () => {
   assert.equal(esc(`<img src=x onerror="a('b')">&`), "&lt;img src=x onerror=&quot;a(&#39;b&#39;)&quot;&gt;&amp;");
   assert.equal(hasOwn({}, "toString"), false); assert.equal(hasOwn(Object.create(null), "x"), false);
+});
+
+test("pinned jsPDF SRI hash matches the npm jspdf@2.5.1 file and the URL is the same version", () => {
+  const file = createRequire(import.meta.url).resolve("jspdf/dist/jspdf.umd.min.js");
+  const pkg = JSON.parse(readFileSync(file.replace(/dist[\\/]jspdf\.umd\.min\.js$/, "package.json"), "utf8"));
+  assert.equal("sha384-" + createHash("sha384").update(readFileSync(file)).digest("base64"), JSPDF_SRI);
+  assert.ok(JSPDF_URL.includes(`/jspdf/${pkg.version}/`), `URL must match installed version ${pkg.version}`);
 });

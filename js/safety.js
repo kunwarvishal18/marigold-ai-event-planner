@@ -10,6 +10,12 @@ export function extractJSON(text) {
   try { return JSON.parse(t.slice(a, b + 1)); } catch { return undefined; }
 }
 
+/* jsPDF is loaded from cdnjs only when a PDF is exported. The browser checks the file against this
+   Subresource Integrity hash (SHA-384 of the npm jspdf@2.5.1 dist file) and refuses to run anything else.
+   CI re-checks the hash against the live CDN file: scripts/verify-sri.mjs. */
+export const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+export const JSPDF_SRI = "sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk";
+
 /* Replies longer than this are rejected before parsing, to bound memory and CPU use. */
 export const MAX_REPLY_CHARS = 200000;
 

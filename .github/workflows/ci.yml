@@ -20,6 +20,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Verify the jsPDF CDN file matches the pinned SRI hash
+        run: node scripts/verify-sri.mjs
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
       - name: Lint, build check, unit and browser tests
