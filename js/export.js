@@ -21,6 +21,7 @@ export function loadJsPDF() {
   if (window.jspdf) return Promise.resolve(window.jspdf);
   return jsPdfLoading ||= new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; s.onload = () => window.jspdf ? res(window.jspdf) : rej(new Error("jsPDF missing")); s.onerror = () => { jsPdfLoading = null; rej(new Error("load failed")); }; document.head.append(s); });
 }
+// eslint-disable-next-line no-control-regex -- keeps tab, LF and CR on purpose; strips other characters the PDF font cannot draw
 export function pdfSafe(s) { return String(s ?? "").replace(/₹/g, "INR ").replace(/[‐-―]/g, "-").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…/g, "...").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF€]/g, ""); }
 export async function buildPDF() {
   const { jsPDF } = await loadJsPDF();

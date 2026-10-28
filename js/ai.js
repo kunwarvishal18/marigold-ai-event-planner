@@ -1,4 +1,5 @@
 // Marigold — ai.js
+import { nextActions } from "./advisor.js";
 import { pctList } from "./budget.js";
 import { DATA_RULE, MAX_REPLY_CHARS, extractJSON, fence } from "./safety.js";
 import { analyze } from "./risks.js";
@@ -84,6 +85,7 @@ ${p.vendors.map(v => `- ${v.category}${v.critical ? " (critical)" : ""}: ${v.sta
 
 IDEAS ALREADY IN PLAN: ${p.ideas.map(i => i.title).join("; ") || "none"}
 RULE-BASED RISKS: ${A.risks.map(r => `${r.sev}: ${r.title}`).join("; ") || "none"}
+RULE-BASED NEXT ACTIONS (dependency-aware): ${nextActions(p, sc).map(a => `${a.title} (${a.why.join(", ")})`).join("; ") || "none"}
 HEALTH SCORE: ${A.health.score}/100`);
 }
 export function chatPrompt(p, msg) {

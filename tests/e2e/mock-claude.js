@@ -43,7 +43,7 @@ async function sample(input, opts) {
   if (p.includes("contextual risks")) return { text: JSON.stringify({ risks: [{ severity: "high", title: "Heat in afternoon", why: "Hot season.", action: "Shift outdoor items to evening." }] }) };
   if (p.includes("NEW USER MESSAGE")) {
     const msg = p.split("NEW USER MESSAGE")[1];
-    const { total, lines } = parseBudget(p);
+    const { lines } = parseBudget(p);
     if (/reduced to/i.test(msg)) {
       const target = 2000000; const cat = lines.find(l => /cater/i.test(l.category)); const others = lines.filter(l => l !== cat);
       const os = others.reduce((a, l) => a + l.amount, 0); const room = target - cat.amount;

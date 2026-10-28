@@ -3,6 +3,7 @@
 //   node scripts/build.mjs --check  exit 1 if the files in dist/ are out of date
 // No dependencies: modules are ordered by their imports, import lines are removed, "export " is
 // dropped, and everything is wrapped in one strict-mode function so nothing leaks into globals.
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,10 +49,13 @@ export function build() {
   const cssTag = '<link rel="stylesheet" href="css/styles.css">', jsTag = '<script type="module" src="js/app.js"></script>';
   if (!html.includes(cssTag) || !html.includes(jsTag)) throw new Error("index.html is missing the stylesheet or module script tag");
   const safeJs = js.replace(/<\/script/gi, "<\\/script");
-  const standalone = html.replace(cssTag, () => `<style>\n${css}</style>`).replace(jsTag, () => `<script>\n${safeJs}</script>`);
+  // The standalone file inlines the script, so its CSP allows exactly that script by SHA-256 hash instead of 'self'.
+  const hash = createHash("sha256").update(`\n${safeJs}`).digest("base64");
+  if (!html.includes("script-src 'self' ")) throw new Error("index.html CSP is missing script-src 'self'");
+  const standalone = html.replace("script-src 'self' ", `script-src 'sha256-${hash}' `).replace(cssTag, () => `<style>\n${css}</style>`).replace(jsTag, () => `<script>\n${safeJs}</script>`);
   // The Artifact host adds its own doctype/head/body, so the artifact build is the page content only.
   const head = html.match(/<head>([\s\S]*?)<\/head>/)[1], body = html.match(/<body>([\s\S]*?)<\/body>/)[1];
-  const headKeep = head.split("\n").filter(l => /<title>|claude:viewport|fonts\.g/.test(l)).join("\n");
+  const headKeep = head.split("\n").filter(l => /<title>|claude:viewport|fonts\.g/.test(l) && !/http-equiv/.test(l)).join("\n");  // claude.ai applies its own CSP
   const artifact = `${headKeep}\n<style>\n${css}</style>\n${body.replace(jsTag, () => `<script>\n${safeJs}</script>`).trim()}\n`;
   return { standalone, artifact, names };
 }

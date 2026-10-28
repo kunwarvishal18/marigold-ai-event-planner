@@ -7,6 +7,7 @@ import { newVendor } from "./model.js";
 import { applyProposal, commit, makeProposal, rejectProposal, showProposal } from "./proposals.js";
 import { analyze } from "./risks.js";
 import { S } from "./state.js";
+import { blockedTasks, nextActions } from "./advisor.js";
 import { allPlans, hiddenCounts, sanePlan, savePlan, storageState } from "./storage.js";
 import { $, $$, CONT_RE, DAY, MAX_AMOUNT, PAYMENTS, STATUSES, clip, daysBetween, esc, fmtDate, fmtShort, isBooked, isNum, iso, money, norm, parseISO, safeAmount, sum, today, uid } from "./util.js";
 
@@ -143,7 +144,7 @@ export function riskItem(r) {
 }
 export function renderOverview(A) {
   const p = S.plan, sc = A.sc;
-  const next = p.tasks.filter(t => !t.done && sc.due[t.id]).sort((a, b) => sc.due[a.id] - sc.due[b.id]).slice(0, 5);
+  const next = nextActions(p, sc), blocked = blockedTasks(p).length;
   // The label never says "On track" while a critical or high risk is open.
   const hasCrit = A.risks.some(r => r.sev === "critical"), hasHigh = A.risks.some(r => r.sev === "high");
   const band = hasCrit || A.health.score < 60 ? "At risk" : hasHigh || A.health.score < 80 ? "Needs attention" : "On track";
@@ -163,8 +164,9 @@ export function renderOverview(A) {
       <div class="toolbar"><h3 style="margin:0;font-size:16px;margin-right:auto">AI risk review</h3><button class="btn small ${aiOn() ? "" : "ghost"}" type="button" id="aiRiskBtn" ${aiOn() && !S.busy.risks ? "" : "disabled"}>${S.busy.risks ? "Reviewing…" : "Run AI risk review"}</button></div>
       ${!aiOn() ? '<p class="hint">Needs Claude. Rule-based checks above still run.</p>' : ""}
       <div id="aiRiskOut">${ai && ai.items.length ? `<p class="hint">Contextual insights from Claude${ai.rev !== p.rev ? " (from an earlier version of the plan)" : ""}. These are advice and don't change the score.</p><ul class="risks">${ai.items.map(r => riskItem({ ...r, source: "ai" })).join("")}</ul>` : ""}</div>
-      <h3 style="margin:8px 0 0;font-size:16px">Next up</h3>
-      ${next.length ? `<ul class="mini">${next.map(t => `<li><span>${esc(t.title)} <span class="pri ${t.priority}">${t.priority}</span></span><span class="${sc.due[t.id] < sc.today ? "overdue" : "note"}">${sc.due[t.id] < sc.today ? "Overdue · " : ""}${fmtShort(sc.due[t.id])}</span></li>`).join("")}</ul>` : `<p class="hint">${sc.ev ? "Everything is done." : "Add an event date to see what's next."}</p>`}
+      <h3 style="margin:8px 0 0;font-size:16px" id="doNextTitle">Do next</h3>
+      ${next.length ? `<ol class="mini donext" aria-labelledby="doNextTitle">${next.map(a => `<li><span><button type="button" class="linkbtn" data-goto="${a.tab}">${esc(a.title)}</button><small class="note">Why: ${esc(a.why.join(", "))}</small></span>${a.due ? `<span class="${a.due < sc.today ? "overdue" : "note"}">${a.due < sc.today ? "Overdue · " : ""}${fmtShort(a.due)}</span>` : ""}</li>`).join("")}</ol>` : `<p class="hint">${!sc.ev ? "Add an event date to see what to do next." : p.tasks.every(t => t.done) ? "Everything is done." : "Nothing urgent: no ready task is due in the next 30 days."}</p>`}
+      <p class="hint">Ranked by rules, not AI: only tasks whose prerequisites are done, ordered by due date, priority and how much they unblock.${blocked ? ` ${blocked} task${blocked > 1 ? "s are" : " is"} waiting on others.` : ""}</p>
       <h3 style="margin:8px 0 0;font-size:16px">Change log</h3>
       ${p.log.length ? `<ul class="log">${p.log.slice(0, 8).map(l => `<li><time>${new Date(l.at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</time>${esc(l.text)} ${l.origin === "ai" ? '<span class="badge ai">AI</span>' : l.origin === "rule" ? '<span class="badge rule">Rule</span>' : ""}</li>`).join("")}</ul>` : '<p class="hint">Applied, rejected and undone changes appear here.</p>'}
     </div>

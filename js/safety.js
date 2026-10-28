@@ -2,9 +2,9 @@
 
 /* ============ Untrusted AI text and prompt data (no DOM, unit-testable) ============ */
 export function extractJSON(text) {
-  let t = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  const t = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   try { return JSON.parse(t); } catch {}
-  const a = t.search(/[\[{]/); if (a < 0) return undefined;
+  const a = t.search(/[[{]/); if (a < 0) return undefined;
   const close = t[a] === "{" ? "}" : "]"; const b = t.lastIndexOf(close);
   if (b <= a) return undefined;
   try { return JSON.parse(t.slice(a, b + 1)); } catch { return undefined; }

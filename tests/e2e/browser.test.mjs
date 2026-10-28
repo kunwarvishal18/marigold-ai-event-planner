@@ -129,7 +129,6 @@ async function suite(b, URL, ok) {
   await pg.evaluate(() => { window.__mode.garbage = false; });
   // AI optimizer + committed floor
   await pg.click('#tab-budget');
-  await pg.evaluate(() => { const p = MarigoldTest.state().plan; });
   await pg.fill('input[data-commit]', '700000'); await pg.locator('input[data-commit]').first().blur(); await pg.waitForTimeout(100);
   await pg.click('[data-save="15"]'); await pg.waitForSelector('#applyBtn'); await pg.click('#applyBtn');
   const a3 = await pg.evaluate(() => { const p = MarigoldTest.state().plan; return { total: p.brief.budget, sum: p.budget.reduce((a, l) => a + l.amount, 0), floor: p.budget.every(l => l.amount >= (l.committed || 0)) }; });
@@ -163,8 +162,6 @@ async function suite(b, URL, ok) {
   const c = await pg.evaluate(() => { const p = MarigoldTest.state().plan; const A = MarigoldTest.analyze(p); return { score: A.health.score, risks: A.risks.map(r => r.title) }; });
   ok('Community 500 guests: weather risk detected', c.risks.some(r => /weather/i.test(r)), c.risks.join(' | '));
   ok('No page errors (AI run)', !errs2.length, errs2.join(' | '));
-  // Template B with 21 days: compression
-  const comp = await pg.evaluate(() => { const S = MarigoldTest.state(); return null; });
   await ctx.close();
 
   // ---------- 3. Short deadline template ----------
@@ -209,8 +206,8 @@ async function suite(b, URL, ok) {
 
 /* ---------- Hardening, accessibility and async-safety checks ---------- */
 async function hardening(b, URL, ok) {
-  const fresh = async (init, mock = false) => {
-    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 } });
+  const fresh = async (init, mock = false, opts = {}) => {
+    const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, ...opts });
     if (mock) { await ctx.addInitScript(MOCK); await ctx.route("https://cdnjs.cloudflare.com/**", r => r.fulfill({ path: JSPDF, contentType: "application/javascript" })); }
     // Seed storage once per context (sessionStorage flag), so reloads see what the app wrote.
     if (init) await ctx.addInitScript(([seed]) => { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); for (const [k, v] of Object.entries(seed)) localStorage.setItem(k, v); } }, [init]);
@@ -284,8 +281,23 @@ async function hardening(b, URL, ok) {
   await pg.evaluate(() => { window.__mode.delay = 30; });
   ok("No page errors (AI safety run)", !errs.length, errs.join(" | ")); await ctx.close();
 
-  // 5. Keyboard and automated accessibility scan (axe-core, WCAG 2.0/2.1/2.2 A and AA rules).
+  // 5. Content-Security-Policy is active, and the "Do next" planner explains its picks.
   ({ ctx, pg, errs } = await fresh());
+  const cspMsgs = []; pg.on("console", m => { if (/Content Security Policy/i.test(m.text())) cspMsgs.push(m.text()); });
+  await pg.click("#openSample"); await pg.waitForTimeout(150);
+  const dn = await pg.evaluate(() => { const items = [...document.querySelectorAll(".donext li")]; const p = MarigoldTest.state().plan; const blockedTitles = new Set(p.tasks.filter(t => !t.done && t.deps.some(d => !p.tasks.find(x => x.id === d).done)).map(t => t.title)); return { n: items.length, why: items.every(li => /Why: /.test(li.textContent)), noBlocked: items.every(li => !blockedTitles.has(li.querySelector("button").textContent)) }; });
+  ok("Do next lists ready actions only, each with a reason", dn.n > 0 && dn.why && dn.noBlocked, JSON.stringify(dn));
+  await pg.click(".donext li button"); await pg.waitForTimeout(100);
+  ok("A Do next item opens the matching tab", await pg.evaluate(() => MarigoldTest.state().tab !== "overview"));
+  for (const t of ["overview", "budget", "timeline", "vendors", "ideas", "eventday", "chat"]) { await pg.click("#tab-" + t); await pg.waitForTimeout(40); }
+  ok("Using the app triggers no CSP violations", cspMsgs.length === 0, cspMsgs.join(" | "));
+  const blocked = await pg.evaluate(() => new Promise(r => { window.__pwned = 0; const sc = document.createElement("script"); sc.textContent = "window.__pwned = 1"; document.body.append(sc); setTimeout(() => r(window.__pwned === 0), 50); }));
+  ok("CSP blocks an injected inline script", blocked && cspMsgs.length >= 1);
+  ok("No page errors (CSP and Do next)", !errs.length, errs.join(" | ")); await ctx.close();
+
+  // 6. Keyboard and automated accessibility scan (axe-core, WCAG 2.0/2.1/2.2 A and AA rules).
+  // axe is injected as an inline script, so this context bypasses the page's CSP.
+  ({ ctx, pg, errs } = await fresh(null, false, { bypassCSP: true }));
   const axe = async label => { await pg.addScriptTag({ path: AXE }); return pg.evaluate(async () => { const r = await axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] } }); return r.violations.map(v => `${v.impact}:${v.id}(${v.nodes.length})`); }).then(v => v.map(x => label + " " + x)); };
   let violations = await axe("welcome");
   await pg.click("#openSample"); await pg.waitForTimeout(150);

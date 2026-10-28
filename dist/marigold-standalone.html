@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Content-Security-Policy for hosted copies. The build swaps 'self' in script-src for a hash of the inlined script. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-zZKS7KLbY3fzDoLCPH9A9UyGkA2Af6ljQjZ1yxxQreU=' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Marigold Event Planner</title>
 <meta name="description" content="Marigold: an AI event planning co-pilot for weddings, birthdays and community events.">
@@ -201,6 +204,8 @@ td input.amt{width:120px;text-align:right;padding:5px 8px}
 @media (max-width:520px){.sched-row{grid-template-columns:90px minmax(0,1fr) auto}.sched-row .owner{display:none}}
 .mini{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:14px}
 .mini li{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.donext li>span:first-child{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+.donext small{font-size:12.5px}
 .iconbtn{font:inherit;background:none;border:1px solid var(--line);border-radius:6px;color:var(--muted);cursor:pointer;padding:3px 8px;font-size:13px}
 
 /* chat */
@@ -413,6 +418,60 @@ const STATUSES = ["Not started", "Shortlisted", "Contacted", "Negotiating", "Boo
 const PAYMENTS = ["Unpaid", "Deposit paid", "Paid in full"];
 const isBooked = v => v.status === "Booked" || v.status === "Completed";
 
+// ---- advisor.js ----
+// Marigold — advisor.js
+
+/* ============ Next best actions (deterministic, no AI) ============
+   Ranks what to do next from the plan itself:
+   - only tasks whose prerequisites are all done are "ready"; blocked tasks are never suggested,
+     but an overdue blocked task raises the priority of the prerequisite holding it up;
+   - urgency comes from the due date, importance from priority and from how many tasks each one unblocks;
+   - critical vendors that aren't booked near their book-by date, and booked vendors still unpaid close
+     to the event, are suggested too.
+   Every item carries a plain-language reason so the user can see why it was picked. */
+function nextActions(p, sc, limit = 5) {
+  const today = sc.today, byId = new Map(p.tasks.map(t => [t.id, t]));
+  const pending = p.tasks.filter(t => !t.done);
+  const waitingOn = t => (t.deps || []).filter(d => byId.has(d) && !byId.get(d).done);
+  const unblocks = new Map(); // task id -> number of pending tasks that wait on it
+  for (const t of pending) for (const d of waitingOn(t)) unblocks.set(d, (unblocks.get(d) || 0) + 1);
+  const holdsUpOverdue = new Set();
+  for (const t of pending) if (sc.due[t.id] && sc.due[t.id] < today) for (const d of waitingOn(t)) holdsUpOverdue.add(d);
+
+  const out = [];
+  for (const t of pending) {
+    if (waitingOn(t).length) continue; // blocked: never suggested directly
+    const due = sc.due[t.id], days = due ? daysBetween(today, due) : null;
+    let score = 0; const why = [];
+    if (days != null && days < 0) { score += 60; why.push(`overdue by ${-days} day${days === -1 ? "" : "s"}`); }
+    else if (days != null && days <= 7) { score += 40; why.push(days === 0 ? "due today" : `due in ${days} day${days === 1 ? "" : "s"}`); }
+    else if (days != null && days <= 30) { score += 20; why.push(`due in ${days} days`); }
+    score += t.priority === "high" ? 15 : t.priority === "medium" ? 5 : 0;
+    if (t.priority === "high") why.push("high priority");
+    const n = unblocks.get(t.id) || 0;
+    if (n) { score += Math.min(n, 5) * 3; why.push(`unblocks ${n} other task${n > 1 ? "s" : ""}`); }
+    if (holdsUpOverdue.has(t.id)) { score += 25; why.push("an overdue task is waiting on it"); }
+    if (score >= 20) out.push({ kind: "task", id: t.id, title: t.title, why, score, due, tab: "timeline" });
+  }
+  const ev = sc.ev, toEvent = ev ? daysBetween(today, ev) : null;
+  for (const v of p.vendors) {
+    const due = sc.vendorDue[v.id], days = due ? daysBetween(today, due) : null;
+    if (v.critical && !isBooked(v) && days != null && days <= 14) {
+      out.push({ kind: "vendor", id: v.id, title: `Book ${v.category}`, why: [days < 0 ? `book-by date passed ${-days} day${days === -1 ? "" : "s"} ago` : `book by ${days === 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`}`, "critical vendor", `stage: ${STATUSES.includes(v.status) ? v.status : "Not started"}`], score: (days < 0 ? 70 : 50) + 10, due, tab: "vendors" });
+    } else if (isBooked(v) && v.payment === "Unpaid" && toEvent != null && toEvent >= 0 && toEvent <= 30) {
+      out.push({ kind: "vendor", id: v.id, title: `Settle the ${v.category} deposit`, why: ["booked but unpaid", `event in ${toEvent} day${toEvent === 1 ? "" : "s"}`], score: 35, due: null, tab: "vendors" });
+    }
+  }
+  out.sort((a, b) => b.score - a.score || (a.due && b.due ? a.due - b.due : a.due ? -1 : b.due ? 1 : 0) || a.title.localeCompare(b.title));
+  return out.slice(0, limit);
+}
+
+/* Tasks that can't start yet, with the unfinished prerequisites holding each one up. */
+function blockedTasks(p) {
+  const byId = new Map(p.tasks.map(t => [t.id, t]));
+  return p.tasks.filter(t => !t.done).map(t => ({ task: t, waiting: (t.deps || []).map(d => byId.get(d)).filter(d => d && !d.done) })).filter(x => x.waiting.length);
+}
+
 // ---- budget.js ----
 // Marigold — budget.js
 
@@ -463,9 +522,9 @@ function pctList(amounts, total) {
 
 /* ============ Untrusted AI text and prompt data (no DOM, unit-testable) ============ */
 function extractJSON(text) {
-  let t = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  const t = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   try { return JSON.parse(t); } catch {}
-  const a = t.search(/[\[{]/); if (a < 0) return undefined;
+  const a = t.search(/[[{]/); if (a < 0) return undefined;
   const close = t[a] === "{" ? "}" : "]"; const b = t.lastIndexOf(close);
   if (b <= a) return undefined;
   try { return JSON.parse(t.slice(a, b + 1)); } catch { return undefined; }
@@ -645,6 +704,7 @@ function loadJsPDF() {
   if (window.jspdf) return Promise.resolve(window.jspdf);
   return jsPdfLoading ||= new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"; s.onload = () => window.jspdf ? res(window.jspdf) : rej(new Error("jsPDF missing")); s.onerror = () => { jsPdfLoading = null; rej(new Error("load failed")); }; document.head.append(s); });
 }
+// eslint-disable-next-line no-control-regex -- keeps tab, LF and CR on purpose; strips other characters the PDF font cannot draw
 function pdfSafe(s) { return String(s ?? "").replace(/₹/g, "INR ").replace(/[‐-―]/g, "-").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/…/g, "...").normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF€]/g, ""); }
 async function buildPDF() {
   const { jsPDF } = await loadJsPDF();
@@ -1244,7 +1304,7 @@ function riskItem(r) {
 }
 function renderOverview(A) {
   const p = S.plan, sc = A.sc;
-  const next = p.tasks.filter(t => !t.done && sc.due[t.id]).sort((a, b) => sc.due[a.id] - sc.due[b.id]).slice(0, 5);
+  const next = nextActions(p, sc), blocked = blockedTasks(p).length;
   // The label never says "On track" while a critical or high risk is open.
   const hasCrit = A.risks.some(r => r.sev === "critical"), hasHigh = A.risks.some(r => r.sev === "high");
   const band = hasCrit || A.health.score < 60 ? "At risk" : hasHigh || A.health.score < 80 ? "Needs attention" : "On track";
@@ -1264,8 +1324,9 @@ function renderOverview(A) {
       <div class="toolbar"><h3 style="margin:0;font-size:16px;margin-right:auto">AI risk review</h3><button class="btn small ${aiOn() ? "" : "ghost"}" type="button" id="aiRiskBtn" ${aiOn() && !S.busy.risks ? "" : "disabled"}>${S.busy.risks ? "Reviewing…" : "Run AI risk review"}</button></div>
       ${!aiOn() ? '<p class="hint">Needs Claude. Rule-based checks above still run.</p>' : ""}
       <div id="aiRiskOut">${ai && ai.items.length ? `<p class="hint">Contextual insights from Claude${ai.rev !== p.rev ? " (from an earlier version of the plan)" : ""}. These are advice and don't change the score.</p><ul class="risks">${ai.items.map(r => riskItem({ ...r, source: "ai" })).join("")}</ul>` : ""}</div>
-      <h3 style="margin:8px 0 0;font-size:16px">Next up</h3>
-      ${next.length ? `<ul class="mini">${next.map(t => `<li><span>${esc(t.title)} <span class="pri ${t.priority}">${t.priority}</span></span><span class="${sc.due[t.id] < sc.today ? "overdue" : "note"}">${sc.due[t.id] < sc.today ? "Overdue · " : ""}${fmtShort(sc.due[t.id])}</span></li>`).join("")}</ul>` : `<p class="hint">${sc.ev ? "Everything is done." : "Add an event date to see what's next."}</p>`}
+      <h3 style="margin:8px 0 0;font-size:16px" id="doNextTitle">Do next</h3>
+      ${next.length ? `<ol class="mini donext" aria-labelledby="doNextTitle">${next.map(a => `<li><span><button type="button" class="linkbtn" data-goto="${a.tab}">${esc(a.title)}</button><small class="note">Why: ${esc(a.why.join(", "))}</small></span>${a.due ? `<span class="${a.due < sc.today ? "overdue" : "note"}">${a.due < sc.today ? "Overdue · " : ""}${fmtShort(a.due)}</span>` : ""}</li>`).join("")}</ol>` : `<p class="hint">${!sc.ev ? "Add an event date to see what to do next." : p.tasks.every(t => t.done) ? "Everything is done." : "Nothing urgent: no ready task is due in the next 30 days."}</p>`}
+      <p class="hint">Ranked by rules, not AI: only tasks whose prerequisites are done, ordered by due date, priority and how much they unblock.${blocked ? ` ${blocked} task${blocked > 1 ? "s are" : " is"} waiting on others.` : ""}</p>
       <h3 style="margin:8px 0 0;font-size:16px">Change log</h3>
       ${p.log.length ? `<ul class="log">${p.log.slice(0, 8).map(l => `<li><time>${new Date(l.at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</time>${esc(l.text)} ${l.origin === "ai" ? '<span class="badge ai">AI</span>' : l.origin === "rule" ? '<span class="badge rule">Rule</span>' : ""}</li>`).join("")}</ul>` : '<p class="hint">Applied, rejected and undone changes appear here.</p>'}
     </div>
@@ -1587,6 +1648,7 @@ ${p.vendors.map(v => `- ${v.category}${v.critical ? " (critical)" : ""}: ${v.sta
 
 IDEAS ALREADY IN PLAN: ${p.ideas.map(i => i.title).join("; ") || "none"}
 RULE-BASED RISKS: ${A.risks.map(r => `${r.sev}: ${r.title}`).join("; ") || "none"}
+RULE-BASED NEXT ACTIONS (dependency-aware): ${nextActions(p, sc).map(a => `${a.title} (${a.why.join(", ")})`).join("; ") || "none"}
 HEALTH SCORE: ${A.health.score}/100`);
 }
 function chatPrompt(p, msg) {
