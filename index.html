@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Marigold Event Planner</title>
+<meta name="description" content="Marigold: an AI event planning co-pilot for weddings, birthdays and community events.">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Karla:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><g fill="var(--accent)"><circle cx="20" cy="20" r="6"/><circle cx="20" cy="9" r="5.5"/><circle cx="20" cy="31" r="5.5"/><circle cx="9" cy="20" r="5.5"/><circle cx="31" cy="20" r="5.5"/><circle cx="12.2" cy="12.2" r="5"/><circle cx="27.8" cy="12.2" r="5"/><circle cx="12.2" cy="27.8" r="5"/><circle cx="27.8" cy="27.8" r="5"/></g><circle cx="20" cy="20" r="4" fill="var(--rose)"/></svg>
+      <div><h1>Marigold</h1><p>Your AI event planning co-pilot</p></div>
+    </div>
+    <span class="chip" id="aiChip" role="status"><span class="dot" id="aiDot"></span><span id="aiText">Checking Claude connection…</span></span>
+  </header>
+
+  <div class="layout" id="layout">
+    <aside class="rail">
+      <form class="card" id="brief" autocomplete="off" novalidate aria-labelledby="formTitle">
+        <div class="toolbar"><h2 id="formTitle">New event</h2><button type="button" class="linkbtn" id="newEventBtn" hidden>+ New event</button></div>
+        <div>
+          <span class="lbl" id="typeLbl">Event type</span>
+          <div class="types" id="types" role="group" aria-labelledby="typeLbl">
+            <button type="button" data-type="Wedding" aria-pressed="true">Wedding</button>
+            <button type="button" data-type="Birthday" aria-pressed="false">Birthday</button>
+            <button type="button" data-type="Community event" aria-pressed="false">Community</button>
+          </div>
+        </div>
+        <div><label for="f-name">Event name</label><input id="f-name" maxlength="90" aria-describedby="e-name"><p class="field-err" id="e-name" role="alert" hidden></p></div>
+        <div class="row2">
+          <div><label for="f-date">Event date</label><input id="f-date" type="date" aria-describedby="e-date"></div>
+          <div><label for="f-time">Start time</label><input id="f-time" type="time"></div>
+        </div>
+        <p class="field-err" id="e-date" role="alert" hidden></p>
+        <div class="row2">
+          <div><label for="f-guests">Guests</label><input id="f-guests" type="number" min="1" max="100000" step="1" inputmode="numeric" aria-describedby="e-guests"></div>
+          <div><label for="f-cap">Venue capacity</label><input id="f-cap" type="number" min="1" step="1" inputmode="numeric" placeholder="Optional"></div>
+        </div>
+        <p class="field-err" id="e-guests" role="alert" hidden></p>
+        <div class="row2">
+          <div><label for="f-budget">Total budget</label><input id="f-budget" type="number" min="1" step="1" inputmode="numeric" aria-describedby="e-budget"></div>
+          <div><label for="f-cur">Currency</label>
+            <select id="f-cur"><option value="INR">INR ₹</option><option value="USD">USD $</option><option value="EUR">EUR €</option><option value="GBP">GBP £</option><option value="AED">AED</option><option value="SGD">SGD</option><option value="AUD">AUD</option><option value="CAD">CAD</option></select></div>
+        </div>
+        <p class="field-err" id="e-budget" role="alert" hidden></p>
+        <div><label for="f-city">City or venue area</label><input id="f-city" maxlength="80"></div>
+        <div><label for="f-style">Style or theme</label><input id="f-style" maxlength="120"></div>
+        <div><label for="f-notes">Priorities and must-haves</label><textarea id="f-notes" maxlength="600" placeholder="Dietary needs, accessibility, sustainability, number of functions…"></textarea></div>
+        <div class="btnrow" id="formBtns"></div>
+        <p class="hint" id="formHint" aria-live="polite"></p>
+      </form>
+      <section class="card" aria-labelledby="savedTitle">
+        <h2 id="savedTitle">Saved plans</h2>
+        <div class="saved-list" id="savedList"></div>
+        <p class="hint">Plans are stored in this browser only.</p>
+      </section>
+    </aside>
+
+    <main id="main">
+      <section class="welcome" id="welcome" hidden aria-labelledby="welcomeTitle">
+        <span class="eyebrow">Weddings · Birthdays · Community events</span>
+        <h2 id="welcomeTitle">From your first idea to the final celebration, plan smarter with AI.</h2>
+        <p class="lede">Describe your event and Marigold drafts a budget, a dated timeline, vendor checklists and ideas for your city and theme. Then refine it by chatting. Every change is shown to you first and only applied when you approve it.</p>
+        <ol class="steps">
+          <li><b>Write a brief</b>Type, date, guests, budget, city and priorities.</li>
+          <li><b>Get an AI plan</b>Budget, timeline, vendors, ideas, run of show.</li>
+          <li><b>See the risks</b>A transparent health score flags what needs attention.</li>
+          <li><b>Refine by chat</b>Ask for changes, review the before and after, approve or undo.</li>
+        </ol>
+        <div class="btnrow">
+          <button class="btn" type="button" id="openSample">Open the sample wedding</button>
+          <button class="btn ghost" type="button" id="startOwn">Plan my own event</button>
+        </div>
+        <div>
+          <span class="lbl">Or fill the brief from a scenario</span>
+          <div class="scen" id="scenarios"></div>
+        </div>
+      </section>
+
+      <div class="plan" id="planView" hidden>
+        <div class="plan-head">
+          <div class="badges" id="badges"></div>
+          <span class="eyebrow" id="pType"></span>
+          <h2 id="pTitle"></h2>
+          <p class="summary" id="pSummary"></p>
+          <div class="toolbar">
+            <button type="button" class="btn ghost small" id="undoBtn" disabled>Undo</button>
+            <details class="export" id="exportBox"><summary class="btn ghost small">Export</summary><div class="export-body" id="exportBody"></div></details>
+          </div>
+        </div>
+        <div id="proposalHost"></div>
+        <div class="stats" id="stats"></div>
+        <div class="tabs" role="tablist" id="tabs" aria-label="Plan sections">
+          <button role="tab" id="tab-overview" data-tab="overview" aria-controls="panel-overview">Overview</button>
+          <button role="tab" id="tab-budget" data-tab="budget" aria-controls="panel-budget">Budget</button>
+          <button role="tab" id="tab-timeline" data-tab="timeline" aria-controls="panel-timeline">Timeline</button>
+          <button role="tab" id="tab-vendors" data-tab="vendors" aria-controls="panel-vendors">Vendors</button>
+          <button role="tab" id="tab-ideas" data-tab="ideas" aria-controls="panel-ideas">Ideas</button>
+          <button role="tab" id="tab-eventday" data-tab="eventday" aria-controls="panel-eventday">Event day</button>
+          <button role="tab" id="tab-chat" data-tab="chat" aria-controls="panel-chat">Co-planner</button>
+        </div>
+        <section class="panel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"></section>
+        <section class="panel" role="tabpanel" id="panel-budget" aria-labelledby="tab-budget" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-timeline" aria-labelledby="tab-timeline" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-vendors" aria-labelledby="tab-vendors" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-ideas" aria-labelledby="tab-ideas" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-eventday" aria-labelledby="tab-eventday" hidden></section>
+        <section class="panel" role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" hidden>
+          <div class="toolbar"><h2>Co-planner</h2><span class="hint" id="chatHint"></span></div>
+          <p class="hint">Ask a question, or ask for a change. Changes come back as a proposal you can review, apply or reject. Nothing in your budget changes without your approval.</p>
+          <div class="msgs" id="msgs" aria-live="polite"></div>
+          <div class="suggest" id="suggest"></div>
+          <form class="ask" id="askForm"><label class="sr" for="askInput">Message the co-planner</label><textarea id="askInput" rows="2" maxlength="1200" placeholder="e.g. My budget is now ₹20 lakh. Keep guests the same and protect catering."></textarea><div class="btnrow" style="flex-direction:column"><button class="btn" id="askBtn" type="submit">Send</button><button class="btn ghost small" id="stopChat" type="button" hidden>Stop</button></div></form>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
