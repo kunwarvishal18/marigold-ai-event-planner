@@ -6,7 +6,8 @@ This file records what was actually run, the results, and what is **not** verifi
 
 ```bash
 npm install            # dev dependencies: playwright, axe-core, jspdf (for offline PDF tests)
-npm test               # build:check + test:unit + test:e2e
+npm test               # lint + build:check + test:unit + test:e2e
+npm run lint           # ESLint (flat config in eslint.config.js)
 npm run build:check    # fails if dist/ doesn't match the source
 npm run test:unit      # node:test on the pure modules (no browser, no Claude)
 npm run test:e2e       # Playwright on BOTH builds; MG_TARGET=modular|standalone for one
@@ -16,14 +17,15 @@ node scripts/screenshots.mjs                         # regenerate README screens
 
 ## Executed results
 
-Run on 2026-10-27 in a Linux container: Node v22.22.0, Playwright 1.63.0 with Chromium, axe-core 4.10.2.
+Run on 2026-10-28 in a Linux container: Node v22.22.0, Playwright 1.63.0 with Chromium, axe-core 4.10.2, ESLint 9.17.0. GitHub Actions (`.github/workflows/ci.yml`) runs the same `npm test` on every push; its first run happens after the workflow is uploaded, so CI results are not recorded here.
 
 | Suite | Result |
 | --- | --- |
+| ESLint | No problems |
 | `build:check` (dist matches source) | Passed |
-| Unit tests (`node:test`) | **27 / 27 passed** |
-| Browser tests, modular app over HTTP | **80 / 80 passed** |
-| Browser tests, single-file build over `file://` | **80 / 80 passed** |
+| Unit tests (`node:test`) | **35 / 35 passed** |
+| Browser tests, modular app over HTTP | **85 / 85 passed** |
+| Browser tests, single-file build over `file://` | **85 / 85 passed** |
 | `npm test` exit code | 0 |
 
 These numbers come from the run itself. If you change code, rerun `npm test` rather than relying on this table.
@@ -34,7 +36,7 @@ The browser tests replace the claude.ai runtime with `tests/e2e/mock-claude.js`,
 
 PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of the cdnjs URL, because cdnjs is not reachable from the test environment.
 
-### Unit tests (tests/unit/core.test.js)
+### Unit tests (tests/unit/core.test.js, tests/unit/advisor.test.js)
 
 - fitToTotal: 5,000 seeded cases give whole numbers that add up exactly and respect floors
 - fitToTotal: locked lines stay exact and the rest absorbs the difference
@@ -63,6 +65,14 @@ PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of th
 - extractJSON handles fences and surrounding prose, returns undefined for garbage
 - fence wraps user text and neutralises attempts to close the data block
 - esc escapes every HTML-significant character; hasOwn ignores the prototype
+- blocked tasks are never suggested; their prerequisite is
+- a prerequisite holding up an overdue task jumps the queue and says why
+- overdue beats due soon, and high priority breaks ties
+- done tasks are ignored and finishing a prerequisite releases the next task
+- tasks more than 30 days out with normal priority are not pushed yet
+- unbooked critical vendor near its book-by date is suggested; non-critical is not
+- booked but unpaid vendor is flagged within 30 days of the event
+- output is deterministic and respects the limit
 
 ### Browser checks (tests/e2e/browser.test.mjs)
 
@@ -144,6 +154,11 @@ PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of th
 | A 300 KB reply is rejected without parsing; nothing changes | PASS | PASS |
 | A reply that arrives after switching plans is discarded (no proposal, no change) | PASS | PASS |
 | No page errors (AI safety run) | PASS | PASS |
+| Do next lists ready actions only, each with a reason | PASS | PASS |
+| A Do next item opens the matching tab | PASS | PASS |
+| Using the app triggers no CSP violations | PASS | PASS |
+| CSP blocks an injected inline script | PASS | PASS |
+| No page errors (CSP and Do next) | PASS | PASS |
 | axe-core finds no WCAG A/AA violations on the welcome screen or any tab, light and dark | PASS | PASS |
 | Tabs work with arrow keys, Home and End (focus and selection move together) | PASS | PASS |
 | Tab key moves from the tab list into the open panel | PASS | PASS |
@@ -171,10 +186,13 @@ PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of th
 | XSS / prompt injection | Unit: esc, fence; Browser: AI HTML rendered as text, injected closing tag neutralised, nothing changes without approval |
 | Mobile | Browser: no horizontal scroll at 390 px on any tab |
 | Keyboard | Browser: arrow keys, Home, End on tabs; Tab into the panel |
+| "Do next" planner | Unit: 8 tests (blocked tasks never suggested, prerequisites of overdue work promoted, ordering, vendors, determinism); Browser: reasons shown, no blocked task listed, item opens its tab |
+| Content-Security-Policy | Browser: normal use causes no violations; an injected inline script is blocked |
 | Automated accessibility | Browser: axe-core WCAG 2.0/2.1/2.2 A and AA rules on welcome and all 7 tabs, light and dark |
 
 ## Not verified
 
+- **GitHub Actions** has not run yet; it starts once `.github/workflows/ci.yml` is in the repository.
 - **Real Claude output.** No automated test calls Claude. Quality, latency, and how often real answers need the retry are unknown until checked manually (below).
 - **The published Artifact runtime.** Permission prompts, the `downloads` capability and rate limits in claude.ai were not exercised by these tests.
 - **PDF export from cdnjs.** Tested only with a local copy of the same version; the CDN bytes could not be fetched here.

@@ -11,6 +11,7 @@ Marigold is a client-only web app. There is no backend, no database server and n
 | Budget arithmetic (exact whole-number totals, committed spend as a floor, percentages that sum to 100.0) | Code | `js/budget.js` |
 | Dates, scheduling, compression for short runways, dependency order, loop removal | Code | `js/util.js`, `js/scheduler.js` |
 | Risk rules and the 0–100 health score (5 areas × 20 points) | Code | `js/risks.js` |
+| "Do next": dependency-aware ranking of ready tasks and vendor deadlines, with reasons | Code | `js/advisor.js` |
 | Before/after preview, apply, reject, undo, and stale-proposal detection | Code, with the user's approval | `js/proposals.js` |
 | Saving, loading, migrating and sanitising plans | Code | `js/storage.js` |
 
@@ -33,6 +34,7 @@ flowchart TD
     BUD["budget.js<br/>fitToTotal, pctList"]
     SCHED["scheduler.js<br/>schedule, breakCycles"]
     RISK["risks.js<br/>rules, health score"]
+    ADV["advisor.js<br/>Do next ranking"]
     EXP["export.js<br/>CSV, PDF"]
     UTIL["util.js / state.js"]
   end
@@ -50,13 +52,15 @@ flowchart TD
   APP --> MODEL --> BUD
   MODEL --> TPL
   UI --> RISK --> SCHED
+  UI --> ADV
+  AI --> ADV
   UI --> EXP --> DL
   EXP --> CDN
   VAL --> SCHED
   UI --> APP
 ```
 
-`safety.js`, `budget.js`, `scheduler.js`, `risks.js`, `validation.js`, `model.js`, `templates.js` and `util.js` have no DOM access, so they are unit-tested directly with `node:test`.
+`advisor.js`, `safety.js`, `budget.js`, `scheduler.js`, `risks.js`, `validation.js`, `model.js`, `templates.js` and `util.js` have no DOM access, so they are unit-tested directly with `node:test`.
 
 ## Request flow for a Claude call
 
@@ -125,6 +129,10 @@ The source of truth is the modular app (`index.html`, `css/styles.css`, `js/*.js
 - `dist/marigold-artifact.html`: the same content without the outer document tags, for publishing as a claude.ai Artifact.
 
 The bundler orders modules by their imports, strips `import`/`export`, refuses duplicate top-level names, and wraps everything in one strict-mode function. `npm run build:check` fails if `dist/` is out of date. The browser test suite runs against both the modular app and the standalone build.
+
+## Security headers
+
+`index.html` sets a Content-Security-Policy: scripts only from the page itself and cdnjs (for jsPDF), styles from the page and Google Fonts, no plugins, no form posts, no fetch or XHR connections, and no `<base>` changes. The build replaces `'self'` in `script-src` with the SHA-256 hash of the inlined script for `dist/marigold-standalone.html`. The Artifact build leaves the policy out because claude.ai sets its own.
 
 ## Efficiency
 

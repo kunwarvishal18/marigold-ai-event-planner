@@ -1,5 +1,7 @@
 # Marigold: AI event planning assistant
 
+[![CI](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/workflows/ci.yml)
+
 **Hack2Skill Virtual PromptWars, Challenge 5: Celebration & Event Planner**
 
 Marigold helps people plan weddings, birthdays and community events. It builds a budget, a timeline, a vendor checklist and personalised ideas from a short brief, then keeps the plan healthy as things change. Claude does the creative planning; plain code checks Claude's work, keeps the maths exact, and never changes the plan without the user's approval.
@@ -31,6 +33,7 @@ Marigold pairs Claude with a deterministic planning engine:
 | Undo and history | Up to 10 undo snapshots and an activity log that records AI, rule-based and manual changes. |
 | Timeline | Phased tasks, priorities, dependencies, overdue and high-priority filters, automatic compression when the event is close. |
 | Vendor manager | Six-stage status pipeline, payments, quotes vs allocation, book-by dates, checklists, questions to ask, and side-by-side options you enter yourself. Marigold never invents vendor names, prices or contacts. |
+| Do next | A dependency-aware action list on the Overview: only tasks whose prerequisites are done, ranked by due date, priority and how many tasks each one unblocks, plus critical vendors near their book-by date and unpaid bookings close to the event. Every pick shows why. The same list is given to Claude so its advice matches. |
 | Risks and health score | Deterministic rules (over budget, thin contingency, capacity exceeded, short runway, unbooked critical vendors, overdue tasks, missing weather backup and more) plus an optional Claude review for contextual risks. Health score: 5 areas × 20 points, with the reason for every deduction. |
 | Ideas | Personalised ideas with rough cost ranges; ask Claude for more with a focus. Duplicates are rejected. |
 | Event-day command center | Countdown, run of show, contacts, emergency kit and weather backup checklists. |
@@ -56,7 +59,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map, request flow, data mo
 ```
 index.html            app markup (modular version)
 css/styles.css        styles, light and dark themes
-js/                   15 native ES modules (no framework, no build step needed to run)
+js/                   16 native ES modules (no framework, no build step needed to run)
 scripts/build.mjs     bundles js/ + css/ into dist/ (standalone and Artifact files)
 scripts/serve.mjs     small local static server for the modular version
 dist/                 generated single-file builds (committed so they can be opened directly)
@@ -108,10 +111,13 @@ npm run build:check    # fails if dist/ is out of date with the source
 ## Tests
 
 ```bash
-npm test               # build check + unit tests + browser tests on both builds
+npm test               # lint + build check + unit tests + browser tests on both builds
+npm run lint           # ESLint
 npm run test:unit      # node:test, pure modules only
 npm run test:e2e       # Playwright; MG_TARGET=modular or MG_TARGET=standalone to run one
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs `npm test` on every push to `main`.
 
 Browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`), so they check Marigold's own logic and safety handling, not the quality of real Claude answers. See [TESTING.md](TESTING.md) for the latest executed results, what is not verified, and a manual checklist for testing with real Claude.
 
@@ -127,6 +133,7 @@ Browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`),
 ## Security and approval controls
 
 - **No secrets:** no API keys or credentials anywhere in the code. Claude access comes from the viewer's own claude.ai session.
+- **Content-Security-Policy:** the hosted and single-file builds only run Marigold's own script (the single-file build allows it by SHA-256 hash) plus jsPDF from cdnjs, with fonts from Google Fonts; no plugins, no form posts, and no fetch or XHR connections (`connect-src 'none'`). A browser test confirms an injected script is blocked. The Artifact build uses claude.ai's own policy.
 - **No backend:** all data stays in the browser's localStorage on the user's device.
 - **Approval before change:** Claude can only propose edits. Nothing is applied without the user pressing *Apply*, and every applied change can be undone.
 - **Untrusted AI output:** size-capped, parsed defensively, validated against schemas, retried once, and rendered only as escaped text (never as HTML).
