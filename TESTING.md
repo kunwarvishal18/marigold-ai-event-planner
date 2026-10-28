@@ -17,7 +17,7 @@ node scripts/screenshots.mjs                         # regenerate README screens
 
 ## Executed results
 
-Run on 2026-10-28 in a Linux container: Node v22.22.0, Playwright 1.63.0 with Chromium, axe-core 4.10.2, ESLint 9.17.0. GitHub Actions (`.github/workflows/ci.yml`) runs the same `npm test` on every push; its first run happens after the workflow is uploaded, so CI results are not recorded here.
+Run on 2026-10-28 in a Linux container: Node v22.22.0, Playwright 1.63.0 with Chromium, axe-core 4.10.2, ESLint 9.17.0. GitHub Actions (`.github/workflows/ci.yml`) runs the same `npm test` on every push. Its first run, on commit 4f8873a (2026-10-28), passed: https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583
 
 | Suite | Result |
 | --- | --- |
@@ -192,7 +192,6 @@ PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of th
 
 ## Not verified
 
-- **GitHub Actions** has not run yet; it starts once `.github/workflows/ci.yml` is in the repository.
 - **Real Claude output.** No automated test calls Claude. Quality, latency, and how often real answers need the retry are unknown until checked manually (below).
 - **The published Artifact runtime.** Permission prompts, the `downloads` capability and rate limits in claude.ai were not exercised by these tests.
 - **PDF export from cdnjs.** Tested only with a local copy of the same version; the CDN bytes could not be fetched here.
