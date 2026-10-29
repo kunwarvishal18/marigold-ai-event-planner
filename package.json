@@ -1,6 +1,6 @@
 {
   "name": "marigold-ai-event-planner",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Marigold: a Claude-powered planning assistant for weddings, birthdays and community events (budgets, timelines, vendors, ideas).",
   "private": true,
   "type": "module",
@@ -9,13 +9,16 @@
     "build:check": "node scripts/build.mjs --check",
     "serve": "node scripts/serve.mjs 8080",
     "lint": "eslint .",
+    "format": "npx --yes prettier@3.8.1 --write .",
+    "format:check": "npx --yes prettier@3.8.1 --check .",
     "test:unit": "node --test tests/unit/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"js/core/**\" --test-coverage-include=\"js/services/**\" --test-coverage-include=\"js/actions/**\" --test-coverage-lines=90 --test-coverage-branches=80 --test-coverage-functions=85 tests/unit/*.test.js",
     "test:e2e": "node tests/e2e/browser.test.mjs",
-    "test": "npm run lint && npm run build:check && npm run test:unit && npm run test:e2e",
+    "test": "npm run lint && npm run build:check && npm run test:coverage && npm run test:e2e",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

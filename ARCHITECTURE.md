@@ -4,73 +4,94 @@ Marigold is a client-only web app. There is no backend, no database server and n
 
 ## Design rule: Claude proposes, code decides
 
-| Concern | Who does it | Where |
-| --- | --- | --- |
-| Writing a personalised plan, ideas, contextual risks, answers in chat, and proposed edits | Claude (generative) | `js/ai.js` prompts, called from `js/app.js` |
-| Checking every Claude answer against a schema, with one retry that tells Claude what was wrong | Code | `js/validation.js`, `aiJSON()` in `js/ai.js` |
-| Budget arithmetic (exact whole-number totals, committed spend as a floor, percentages that sum to 100.0) | Code | `js/budget.js` |
-| Dates, scheduling, compression for short runways, dependency order, loop removal | Code | `js/util.js`, `js/scheduler.js` |
-| Risk rules and the 0–100 health score (5 areas × 20 points) | Code | `js/risks.js` |
-| "Do next": dependency-aware ranking of ready tasks and vendor deadlines, with reasons | Code | `js/advisor.js` |
-| Before/after preview, apply, reject, undo, and stale-proposal detection | Code, with the user's approval | `js/proposals.js` |
-| Saving, loading, migrating and sanitising plans | Code | `js/storage.js` |
+| Concern                                                                                                  | Who does it                    | Where                                                              |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| Writing a personalised plan, ideas, contextual risks, answers in chat, and proposed edits                | Claude (generative)            | `services/prompts.js`, called from `actions/assistant.js`          |
+| Checking every Claude answer against a schema, with one retry that tells Claude what was wrong           | Code                           | `core/validation.js`, `askClaudeForJSON()` in `services/claude.js` |
+| Budget arithmetic (exact whole-number totals, committed spend as a floor, percentages that sum to 100.0) | Code                           | `core/budget.js`                                                   |
+| Dates, scheduling, compression for short runways, dependency order, loop removal                         | Code                           | `core/dates.js`, `core/scheduler.js`                               |
+| Risk rules and the 0–100 health score (5 areas × 20 points)                                              | Code                           | `core/risks.js`                                                    |
+| "Do next": dependency-aware ranking of ready tasks and vendor deadlines, with reasons                    | Code                           | `core/advisor.js`                                                  |
+| Turning a requested change into a checked before/after preview                                           | Code                           | `core/proposal.js`                                                 |
+| Apply, reject, undo, and stale-proposal detection                                                        | Code, with the user's approval | `actions/history.js`                                               |
+| Saving, loading, migrating and sanitising plans                                                          | Code                           | `services/storage.js`                                              |
 
 No consequential change reaches a plan until the user presses **Apply** on a preview. Template and rule-based results are always labelled as such, never as AI output.
 
-## Module map
+## Layers
 
-```mermaid
-flowchart TD
-  subgraph Browser["Browser (index.html or single-file build)"]
-    APP["app.js<br/>actions, wiring, boot"]
-    UI["ui.js<br/>rendering, forms, tabs"]
-    AI["ai.js<br/>prompts, aiJSON retry, error messages"]
-    SAFE["safety.js<br/>extractJSON, size cap, data fencing"]
-    VAL["validation.js<br/>schemas for Claude output"]
-    PROP["proposals.js<br/>preview, apply, reject, undo"]
-    STORE["storage.js<br/>localStorage, backup, sanitise, migrate"]
-    MODEL["model.js<br/>plan builder"]
-    TPL["templates.js<br/>event templates, sample scenarios"]
-    BUD["budget.js<br/>fitToTotal, pctList"]
-    SCHED["scheduler.js<br/>schedule, breakCycles"]
-    RISK["risks.js<br/>rules, health score"]
-    ADV["advisor.js<br/>Do next ranking"]
-    EXP["export.js<br/>CSV, PDF"]
-    UTIL["util.js / state.js"]
-  end
-  CLAUDE[("Claude via window.claude.use('sample')")]
-  DL[("Downloads via window.claude.use('downloads')")]
-  LS[("localStorage mg2.*")]
-  CDN[("cdnjs: jsPDF 2.5.1, SRI-pinned, loaded only on PDF export")]
+The code is split into four layers. Imports only point down, so there are no circular imports.
 
-  APP --> AI --> CLAUDE
-  AI --> SAFE
-  APP --> VAL
-  APP --> PROP --> BUD
-  PROP --> SCHED
-  APP --> STORE --> LS
-  APP --> MODEL --> BUD
-  MODEL --> TPL
-  UI --> RISK --> SCHED
-  UI --> ADV
-  AI --> ADV
-  UI --> EXP --> DL
-  EXP --> CDN
-  VAL --> SCHED
-  UI --> APP
+```
+js/
+  core/      pure planning logic: no DOM, no storage, no app state; runs unchanged in Node
+  services/  app state, localStorage, the Claude client and prompts, export, the view port
+  actions/   operations that change the plan: generate, optimise, apply, undo, open, delete
+  ui/        rendering (one module per tab or panel) and event handlers
+  app.js     start-up: connects the view, wires the page, restores the last plan, asks for Claude
 ```
 
-`advisor.js`, `safety.js`, `budget.js`, `scheduler.js`, `risks.js`, `validation.js`, `model.js`, `templates.js` and `util.js` have no DOM access, so they are unit-tested directly with `node:test`.
+```mermaid
+flowchart BT
+  CORE["core/<br/>budget, dates, scheduler, risks, advisor,<br/>model, proposal, validation, safety, templates"]
+  SERVICES["services/<br/>state, storage, claude, prompts, export, view port"]
+  ACTIONS["actions/<br/>assistant (Claude requests), history (apply/undo), plans"]
+  UI["ui/<br/>render, form, tabs, proposal panel, toast, controller"]
+  APP["app.js"]
+  CORE --> SERVICES --> ACTIONS --> UI --> APP
+```
+
+How this is enforced:
+
+- **ESLint** (`eslint.config.js`) forbids imports from a higher layer (`no-restricted-imports`) and browser APIs inside `core/` (`no-restricted-globals`). Logic in `services/` and `actions/` may not touch `document`.
+- **The build** (`scripts/build.mjs`) refuses to bundle an import cycle.
+- **A unit test** (`tests/unit/architecture.test.js`) walks the import graph and fails on a cycle, an upward import, or a browser API in `core/`.
+
+### The view port (dependency inversion)
+
+Logic often needs to tell the page something ("show this toast", "re-render the budget", "the Claude connection was declined"). Instead of importing the UI, `services/` and `actions/` call methods on `view` from `services/view.js`. At start-up `app.js` connects the DOM implementation (`domView` in `ui/controller.js`). Until then the methods are no-ops, which is also how the unit tests run the actions without a browser: they connect a recording fake.
+
+## Module map
+
+| Module                    | Responsibility                                                                |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `core/util.js`            | Numbers, strings, ids, `safeAmount`, `MAX_AMOUNT`                             |
+| `core/dates.js`           | Strict `YYYY-MM-DD` parsing, day arithmetic                                   |
+| `core/format.js`          | `escapeHtml`, money and date formatting                                       |
+| `core/constants.js`       | Vendor stages, payment states, priorities, severities, contingency pattern    |
+| `core/budget.js`          | `fitToTotal` (exact allocation), `pctList` (shares that sum to 100.0)         |
+| `core/scheduler.js`       | Due dates, compression, dependency order, `breakCycles`                       |
+| `core/risks.js`           | Budget, timeline, vendor and event risk rules; health score                   |
+| `core/advisor.js`         | "Do next" ranking with reasons                                                |
+| `core/model.js`           | Plan data model, `buildPlan`, `newVendor`                                     |
+| `core/proposal.js`        | `makeProposal` (apply a change to a copy and check it), `diffPlans`           |
+| `core/validation.js`      | Schemas for every Claude reply                                                |
+| `core/safety.js`          | `extractJSON`, reply size cap, data fencing for prompts, jsPDF SRI pin        |
+| `core/template-data.js`   | Built-in starter content per event type                                       |
+| `core/templates.js`       | Expands template data into the generated-plan shape                           |
+| `core/scenarios.js`       | Demo briefs on the welcome screen                                             |
+| `services/state.js`       | The single app state object and request sequence numbers                      |
+| `services/view.js`        | The view port (see above)                                                     |
+| `services/local-store.js` | `localStorage` wrapper that never throws; storage keys                        |
+| `services/storage.js`     | Load, save, back up, sanitise and migrate plans                               |
+| `services/claude.js`      | `askClaudeForJSON` with validation and one retry; error messages              |
+| `services/prompts.js`     | Prompt builders for generation, chat, optimizer, ideas and risk review        |
+| `services/export.js`      | CSV (with formula-injection protection) and PDF export                        |
+| `actions/assistant.js`    | Generate, optimise, more ideas, AI risk review, co-planner chat               |
+| `actions/history.js`      | Show/apply/reject proposals, direct edits (`commit`), undo                    |
+| `actions/plans.js`        | Open, create, review details, delete, sample plan                             |
+| `ui/*.js`                 | One module per area: form, saved plans, proposal panel, each tab, export menu |
 
 ## Request flow for a Claude call
 
 ```mermaid
 sequenceDiagram
   participant U as User
-  participant A as app.js
+  participant A as actions/assistant.js
   participant C as Claude (sample)
-  participant V as validator
-  participant P as proposals.js
+  participant V as core/validation.js
+  participant P as core/proposal.js
+  participant H as actions/history.js
   U->>A: Ask co-planner / generate / optimise
   A->>A: busy flag on, sequence number++, remember plan id
   A->>C: prompt (user text and plan inside data tags)
@@ -84,8 +105,8 @@ sequenceDiagram
   A->>A: discard if sequence or plan id changed (stale)
   A->>P: makeProposal: exact budget fit, clamped dates, diff
   P-->>U: before/after preview with warnings
-  U->>P: Apply / Reject (Apply refused if the plan changed since)
-  P->>A: snapshot for Undo, save
+  U->>H: Apply / Reject (Apply refused if the plan changed since)
+  H->>H: snapshot for Undo, save
 ```
 
 ## Data model (plan version 2)
@@ -103,7 +124,9 @@ plan = {
 }
 ```
 
-Invariants enforced in code:
+The same shape is documented as JSDoc types in `core/model.js`.
+
+Invariants enforced in code (and covered by unit tests):
 
 - `sum(budget.amount) === brief.budget` after every applied change; every amount is a whole number in `[0, 1e12]`.
 - No budget line goes below its committed amount. If that is impossible, the change is refused with an explanation.
@@ -111,30 +134,32 @@ Invariants enforced in code:
 
 ## Persistence
 
-| Key | Contents |
-| --- | --- |
-| `mg2.plans` | Object of plans by id |
-| `mg2.last` | Id of the last opened plan |
-| `mg2.tab` | Last open tab |
-| `mg2.migrated` | Set after a one-time import of version-1 plans from `mg.plans` |
+| Key                             | Contents                                                         |
+| ------------------------------- | ---------------------------------------------------------------- |
+| `mg2.plans`                     | Object of plans by id                                            |
+| `mg2.last`                      | Id of the last opened plan                                       |
+| `mg2.tab`                       | Last open tab                                                    |
+| `mg2.migrated`                  | Set after a one-time import of version-1 plans from `mg.plans`   |
 | `mg2.plans.corrupt-<timestamp>` | Raw copy of unreadable data, made before anything new is written |
 
 Loading never throws and never erases data. Unreadable JSON is backed up first; if the backup cannot be written, saving is paused for the session. Plans with a newer `v`, or that fail validation, stay in storage unchanged and are listed as hidden. Loaded plans are sanitised (amount ranges, dependency links and loops) and plan lookups use prototype-free objects and own-property checks.
 
 ## Builds
 
-The source of truth is the modular app (`index.html`, `css/styles.css`, `js/*.js`). `npm run build` (`scripts/build.mjs`) produces:
+The source of truth is the modular app (`index.html`, `css/styles.css`, `js/**`). `npm run build` (`scripts/build.mjs`, no dependencies) produces:
 
 - `dist/marigold-standalone.html`: one self-contained HTML file (CSS and JS inlined) that opens from disk.
 - `dist/marigold-artifact.html`: the same content without the outer document tags, for publishing as a claude.ai Artifact.
 
-The bundler orders modules by their imports, strips `import`/`export`, refuses duplicate top-level names, and wraps everything in one strict-mode function. `npm run build:check` fails if `dist/` is out of date. The browser test suite runs against both the modular app and the standalone build.
+The bundler gives each ES module its own function scope that returns its exports, turns imports into destructuring from the modules they name, orders modules so dependencies come first, and fails on an import cycle or unsupported syntax. `npm run build:check` fails if `dist/` is out of date. The browser test suite runs against both the modular app and the standalone build. `dist/` is committed on purpose so the single-file app can be downloaded straight from GitHub; CI checks it matches the source.
 
 ## Security headers
 
-`index.html` sets a Content-Security-Policy: scripts only from the page itself and cdnjs (for jsPDF), styles from the page and Google Fonts, no plugins, no form posts, no fetch or XHR connections, and no `<base>` changes. The build replaces `'self'` in `script-src` with the SHA-256 hash of the inlined script for `dist/marigold-standalone.html`. The Artifact build leaves the policy out because claude.ai sets its own.
+`index.html` sets a Content-Security-Policy: scripts only from the page itself and cdnjs (for jsPDF), styles from the page and Google Fonts, no plugins, no form posts, no fetch or XHR connections, and no `<base>` changes. **There is no `'unsafe-inline'`.** The markup never uses `style=""` attributes; dynamic sizes (progress bars) are set through the CSSOM from `data-width` attributes, which the policy allows. For `dist/marigold-standalone.html` the build replaces `'self'` in `script-src` and `style-src` with the SHA-256 hashes of the inlined script and stylesheet. The Artifact build leaves the policy out because claude.ai sets its own.
 
-jsPDF is loaded with a Subresource Integrity hash (`JSPDF_SRI` in `js/safety.js`), `crossorigin="anonymous"` and `referrerpolicy="no-referrer"`, in both builds. `scripts/verify-sri.mjs` runs in CI and fails the build if the live cdnjs file no longer matches the pinned hash.
+jsPDF is loaded with a Subresource Integrity hash (`JSPDF_SRI` in `core/safety.js`), `crossorigin="anonymous"` and `referrerpolicy="no-referrer"`, in both builds. `scripts/verify-sri.mjs` runs in CI and fails the build if the live cdnjs file no longer matches the pinned hash.
+
+All dynamic text reaches the page through `escapeHtml()` before it is placed in markup.
 
 ## Efficiency
 

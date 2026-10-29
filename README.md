@@ -24,21 +24,21 @@ Marigold pairs Claude with a deterministic planning engine:
 
 ## Features
 
-| Area | What it does |
-| --- | --- |
-| Plan generation | Claude writes a plan for the brief: budget split, 12–30 tasks in phases with dependencies, vendors with checklists and questions, ideas, run of show, contextual risks. Template plans are available without Claude and are labelled as templates. |
-| Budget | Exact whole-number allocations that always add up to the total; committed spend is protected as a minimum; shares shown to one decimal always total 100.0%. |
-| Budget optimizer | "Save 10/15/20%" with an optional "protect" note. Claude chooses where to cut and explains the trade-offs; code enforces the exact total and the committed floors. Without Claude, a labelled proportional cut is used. |
-| Conversational editing | Ask for changes in plain language. Claude returns a structured proposal; Marigold shows the diff, warnings and trade-offs, and applies only on approval. Proposals go stale (and can't be applied) if the plan changes underneath them. |
-| Undo and history | Up to 10 undo snapshots and an activity log that records AI, rule-based and manual changes. |
-| Timeline | Phased tasks, priorities, dependencies, overdue and high-priority filters, automatic compression when the event is close. |
-| Vendor manager | Six-stage status pipeline, payments, quotes vs allocation, book-by dates, checklists, questions to ask, and side-by-side options you enter yourself. Marigold never invents vendor names, prices or contacts. |
-| Do next | A dependency-aware action list on the Overview: only tasks whose prerequisites are done, ranked by due date, priority and how many tasks each one unblocks, plus critical vendors near their book-by date and unpaid bookings close to the event. Every pick shows why. The same list is given to Claude so its advice matches. |
-| Risks and health score | Deterministic rules (over budget, thin contingency, capacity exceeded, short runway, unbooked critical vendors, overdue tasks, missing weather backup and more) plus an optional Claude review for contextual risks. Health score: 5 areas × 20 points, with the reason for every deduction. |
-| Ideas | Personalised ideas with rough cost ranges; ask Claude for more with a focus. Duplicates are rejected. |
-| Event-day command center | Countdown, run of show, contacts, emergency kit and weather backup checklists. |
-| Exports | Budget, vendors and timeline as CSV (with spreadsheet-formula injection guarded) and the full plan as PDF. Copy-to-clipboard fallback where downloads aren't available. |
-| Onboarding | Three sample briefs (wedding, birthday, community event) and an explorable example plan. |
+| Area                     | What it does                                                                                                                                                                                                                                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plan generation          | Claude writes a plan for the brief: budget split, 12–30 tasks in phases with dependencies, vendors with checklists and questions, ideas, run of show, contextual risks. Template plans are available without Claude and are labelled as templates.                                                                              |
+| Budget                   | Exact whole-number allocations that always add up to the total; committed spend is protected as a minimum; shares shown to one decimal always total 100.0%.                                                                                                                                                                     |
+| Budget optimizer         | "Save 10/15/20%" with an optional "protect" note. Claude chooses where to cut and explains the trade-offs; code enforces the exact total and the committed floors. Without Claude, a labelled proportional cut is used.                                                                                                         |
+| Conversational editing   | Ask for changes in plain language. Claude returns a structured proposal; Marigold shows the diff, warnings and trade-offs, and applies only on approval. Proposals go stale (and can't be applied) if the plan changes underneath them.                                                                                         |
+| Undo and history         | Up to 10 undo snapshots and an activity log that records AI, rule-based and manual changes.                                                                                                                                                                                                                                     |
+| Timeline                 | Phased tasks, priorities, dependencies, overdue and high-priority filters, automatic compression when the event is close.                                                                                                                                                                                                       |
+| Vendor manager           | Six-stage status pipeline, payments, quotes vs allocation, book-by dates, checklists, questions to ask, and side-by-side options you enter yourself. Marigold never invents vendor names, prices or contacts.                                                                                                                   |
+| Do next                  | A dependency-aware action list on the Overview: only tasks whose prerequisites are done, ranked by due date, priority and how many tasks each one unblocks, plus critical vendors near their book-by date and unpaid bookings close to the event. Every pick shows why. The same list is given to Claude so its advice matches. |
+| Risks and health score   | Deterministic rules (over budget, thin contingency, capacity exceeded, short runway, unbooked critical vendors, overdue tasks, missing weather backup and more) plus an optional Claude review for contextual risks. Health score: 5 areas × 20 points, with the reason for every deduction.                                    |
+| Ideas                    | Personalised ideas with rough cost ranges; ask Claude for more with a focus. Duplicates are rejected.                                                                                                                                                                                                                           |
+| Event-day command center | Countdown, run of show, contacts, emergency kit and weather backup checklists.                                                                                                                                                                                                                                                  |
+| Exports                  | Budget, vendors and timeline as CSV (with spreadsheet-formula injection guarded) and the full plan as PDF. Copy-to-clipboard fallback where downloads aren't available.                                                                                                                                                         |
+| Onboarding               | Three sample briefs (wedding, birthday, community event) and an explorable example plan.                                                                                                                                                                                                                                        |
 
 ## How Claude is used
 
@@ -50,30 +50,34 @@ Marigold makes five kinds of Claude calls, all through `window.claude.use("sampl
 4. **More ideas** with an optional focus.
 5. **Contextual risk review** (season, local logistics, guest needs) on top of the rule-based checks.
 
-Every call asks for strict JSON, is validated against a schema in `js/validation.js`, and gets one automatic retry that lists exactly what was wrong. User text and plan data are sent inside named data tags, and Claude is told not to follow instructions found inside them. Responses are discarded if the user has moved on (sequence and plan-id checks), and duplicate clicks are ignored while a request is running. The prompts tell Claude not to invent real business names, phone numbers, ratings, availability or live weather, and to treat all costs as estimates.
+Every call asks for strict JSON, is validated against a schema in `js/core/validation.js`, and gets one automatic retry that lists exactly what was wrong. User text and plan data are sent inside named data tags, and Claude is told not to follow instructions found inside them. Responses are discarded if the user has moved on (sequence and plan-id checks), and duplicate clicks are ignored while a request is running. The prompts tell Claude not to invent real business names, phone numbers, ratings, availability or live weather, and to treat all costs as estimates.
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map, request flow, data model and invariants (with Mermaid diagrams).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the layers, module map, request flow, data model and invariants (with Mermaid diagrams). Imports only point down a layer (core ← services ← actions ← ui ← app); ESLint, the build and a unit test all enforce it, so there are no circular imports.
 
 ```
 index.html            app markup (modular version)
 css/styles.css        styles, light and dark themes
-js/                   16 native ES modules (no framework, no build step needed to run)
+js/app.js             start-up
+js/core/              pure planning logic: budget maths, scheduling, risks, validation (no DOM)
+js/services/          app state, storage, Claude client, prompts, export, view port
+js/actions/           operations that change the plan (generate, apply, undo, …)
+js/ui/                rendering and event handlers, one module per tab or panel
 scripts/build.mjs     bundles js/ + css/ into dist/ (standalone and Artifact files)
 scripts/serve.mjs     small local static server for the modular version
 dist/                 generated single-file builds (committed so they can be opened directly)
-tests/unit/           node:test unit tests for the pure modules
+tests/unit/           node:test unit tests for core, services and actions (with coverage)
 tests/e2e/            Playwright browser tests + a clearly labelled Claude mock
 docs/screenshots/     screenshots captured from the running app
 ```
 
 ## Tech stack
 
-- HTML, CSS and vanilla JavaScript (ES2022, native ES modules). No runtime dependencies or framework.
+- HTML, CSS and vanilla JavaScript (ES2024, native ES modules, JSDoc types). No runtime dependencies or framework.
 - Claude through the claude.ai Artifact runtime (`sample` and `downloads` capabilities). No API key is used or stored anywhere.
 - jsPDF 2.5.1, loaded from cdnjs only when a PDF is exported, pinned with a Subresource Integrity (SHA-384) hash and `crossorigin="anonymous"`.
-- Dev only: Node.js 18+, Playwright, axe-core, and a local jsPDF copy for offline tests.
+- Dev only: Node.js 22+, ESLint, Prettier, Playwright, axe-core, and a local jsPDF copy for offline tests.
 
 ## Install
 
@@ -111,31 +115,36 @@ npm run build:check    # fails if dist/ is out of date with the source
 ## Tests
 
 ```bash
-npm test               # lint + build check + unit tests + browser tests on both builds
-npm run lint           # ESLint
-npm run test:unit      # node:test, pure modules only
+npm test               # lint + build check + unit tests with coverage + browser tests on both builds
+npm run lint           # ESLint (quality limits and layer rules)
+npm run format:check   # Prettier
+npm run test:unit      # node:test unit tests
+npm run test:coverage  # unit tests; fails below 90% lines, 80% branches, 85% functions
 npm run test:e2e       # Playwright; MG_TARGET=modular or MG_TARGET=standalone to run one
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs `npm test` on every push to `main`.
+GitHub Actions (`.github/workflows/ci.yml`) runs the Prettier check and `npm test` on every push to `main` and on pull requests.
 
-### Latest results (2026-10-28)
+### Latest results (2026-10-29)
 
-| Check | Result |
-| --- | --- |
-| ESLint | No problems |
-| Unit tests (`node:test`) | 36 / 36 passed |
-| Browser tests, modular app | 86 / 86 passed |
-| Browser tests, single-file build | 86 / 86 passed |
-| GitHub Actions CI | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583) on its first run |
-| Manual checklist with real Claude in the live Artifact (13 items) | All passed, run by the project owner |
+| Check                                                                  | Result                                                                                                          |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| ESLint (including layer rules)                                         | No problems                                                                                                     |
+| Prettier                                                               | All files formatted                                                                                             |
+| Unit tests (`node:test`)                                               | 82 / 82 passed                                                                                                  |
+| Unit test coverage of `core/`, `services/`, `actions/`                 | 94% lines, 83% branches, 92% functions                                                                          |
+| Browser tests, modular app                                             | 86 / 86 passed                                                                                                  |
+| Browser tests, single-file build                                       | 86 / 86 passed                                                                                                  |
+| axe-core accessibility scan (WCAG 2.2 A/AA), every tab, light and dark | No violations                                                                                                   |
+| GitHub Actions CI                                                      | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583) on its first run |
+| Manual checklist with real Claude in the live Artifact (13 items)      | All passed, run by the project owner                                                                            |
 
 Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`), so they check Marigold's own logic and safety handling. The behaviour with real Claude (generation, co-planner edits with approval, prompt-injection attempt, optimizer, ideas, AI risk review, exports, stale replies and phone-sized screens) was checked by hand in the live Artifact. See [TESTING.md](TESTING.md) for every check, what is not verified, and the manual checklist.
 
 ## Typical workflows
 
-1. **New plan:** pick a sample brief or fill in Event details, then press *Generate plan with AI* (or *Use template* without Claude).
-2. **Budget cut:** in Co-planner, type "My budget has been reduced to ₹20 lakh, protect catering". Review the preview, then *Apply* or *Reject*. *Undo* is in the plan header.
+1. **New plan:** pick a sample brief or fill in Event details, then press _Generate plan with AI_ (or _Use template_ without Claude).
+2. **Budget cut:** in Co-planner, type "My budget has been reduced to ₹20 lakh, protect catering". Review the preview, then _Apply_ or _Reject_. _Undo_ is in the plan header.
 3. **Save money:** Budget tab, choose 10/15/20%, optionally say what to protect, review and apply.
 4. **Track vendors:** Vendors tab, move each vendor through the stages, enter quotes and options you collected yourself.
 5. **Event day:** Event day tab for the countdown, run of show, contacts and checklists.
@@ -144,10 +153,10 @@ Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-cl
 ## Security and approval controls
 
 - **No secrets:** no API keys or credentials anywhere in the code. Claude access comes from the viewer's own claude.ai session.
-- **Content-Security-Policy:** the hosted and single-file builds only run Marigold's own script (the single-file build allows it by SHA-256 hash) plus jsPDF from cdnjs, with fonts from Google Fonts; no plugins, no form posts, and no fetch or XHR connections (`connect-src 'none'`). A browser test confirms an injected script is blocked. The Artifact build uses claude.ai's own policy.
+- **Content-Security-Policy:** no `'unsafe-inline'` for scripts or styles. The hosted and single-file builds only run Marigold's own script and stylesheet (the single-file build allows each by SHA-256 hash) plus jsPDF from cdnjs, with fonts from Google Fonts; no plugins, no form posts, and no fetch or XHR connections (`connect-src 'none'`). A browser test confirms an injected script is blocked. The Artifact build uses claude.ai's own policy.
 - **Subresource Integrity:** the jsPDF script tag carries a pinned SHA-384 hash, so the browser refuses it if the CDN file is ever changed. The hash is the hash of the npm `jspdf@2.5.1` file (checked by a unit test), CI checks it against the live cdnjs file on every run, and a browser test confirms a tampered copy is blocked and PDF export fails safely with an error message.
 - **No backend:** all data stays in the browser's localStorage on the user's device.
-- **Approval before change:** Claude can only propose edits. Nothing is applied without the user pressing *Apply*, and every applied change can be undone.
+- **Approval before change:** Claude can only propose edits. Nothing is applied without the user pressing _Apply_, and every applied change can be undone.
 - **Untrusted AI output:** size-capped, parsed defensively, validated against schemas, retried once, and rendered only as escaped text (never as HTML).
 - **Prompt injection:** user text and plan data are fenced in data tags with tag-closing attempts neutralised; the deeper defence is that code validates every result and the user approves every change.
 - **Storage safety:** unreadable data is backed up before anything is written; newer-version plans are kept untouched; loaded data is sanitised; prototype-safe lookups.
@@ -178,16 +187,16 @@ Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-cl
 
 Captured from the running app with Playwright (template and example data, no real Claude call):
 
-| Overview | Proposal preview |
-| --- | --- |
+| Overview                                                                   | Proposal preview                                                          |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | ![Overview tab of the example wedding plan](docs/screenshots/overview.png) | ![Before/after preview of a budget change](docs/screenshots/proposal.png) |
 
-| Vendors | Mobile |
-| --- | --- |
+| Vendors                                         | Mobile                                                          |
+| ----------------------------------------------- | --------------------------------------------------------------- |
 | ![Vendor manager](docs/screenshots/vendors.png) | ![Overview on a 390px wide screen](docs/screenshots/mobile.png) |
 
 ## Author and acknowledgements
 
-- Author: Vishal Kunwar 
+- Author: Vishal Kunwar
 - Built for Hack2Skill Virtual PromptWars (Challenge 5), with Claude used as the in-app planning model and as a coding assistant.
 - jsPDF (MIT) for PDF export; Playwright and axe-core for testing.
