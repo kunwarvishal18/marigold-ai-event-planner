@@ -8,6 +8,7 @@ Marigold helps people plan weddings, birthdays and community events. It builds a
 
 - **Live Artifact (runs with Claude):** https://claude.ai/artifact/RcrBY95y94zQQPAEgWdWAa (opens in claude.ai)
 - **Offline single file:** [`dist/marigold-standalone.html`](dist/marigold-standalone.html) (template and rule-based features work without Claude)
+- **AI approach and submission verification:** [docs/AI-APPROACH.md](docs/AI-APPROACH.md) — architecture, safeguards, live-AI smoke tests and demo checklist
 
 ## The problem
 
