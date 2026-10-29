@@ -3,7 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { addDays, toIsoDate, today } from "../../js/core/dates.js";
-import { corePlan, diffPlans, makeProposal } from "../../js/core/proposal.js";
+import { diffPlans } from "../../js/core/plan-diff.js";
+import { corePlan, makeProposal } from "../../js/core/proposal.js";
 import { allocated, weddingPlan } from "./helpers.js";
 
 const spec = (changes, extra = {}) => ({

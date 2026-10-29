@@ -8,8 +8,15 @@ import { analyze } from "../core/risks.js";
 import { JSPDF_SRI, JSPDF_URL } from "../core/safety.js";
 import { isNumeric, sum } from "../core/util.js";
 
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/model.js").Task} Task */
+/** @typedef {import("../core/risks.js").Analysis} Analysis */
+/** @typedef {import("../core/scheduler.js").Schedule} Schedule */
+/** @typedef {Array<string|number>} CsvRow */
+/** @typedef {(amount: number) => string} Money */
+
 /**
- * One CSV cell. Text that a spreadsheet would run as a formula (=, +, -, @, tab, CR) is prefixed
+ * One CSV cell. Text that a spreadsheet would run as a formula (=, +, -, "at" sign, tab, CR) is prefixed
  * with an apostrophe (CSV injection protection); cells with quotes, commas or newlines are quoted.
  * @param {unknown} value
  * @returns {string}
@@ -29,10 +36,15 @@ export function csvCell(value) {
 export function buildCSV(plan, kind) {
   const analysis = analyze(plan);
   const builders = { budget: budgetRows, vendors: vendorRows, timeline: timelineRows };
-  const rows = (builders[kind] || timelineRows)(plan, analysis);
+  const rows = (Object.hasOwn(builders, kind) ? builders[kind] : timelineRows)(plan, analysis);
   return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Analysis} analysis
+ * @returns {CsvRow[]}
+ */
 function budgetRows(plan, analysis) {
   const cur = plan.brief.currency;
   const pcts = pctList(
@@ -52,17 +64,23 @@ function budgetRows(plan, analysis) {
     [
       "Total",
       sum(pcts).toFixed(1),
-      analysis.alloc,
+      analysis.allocated,
       analysis.committed,
-      analysis.alloc - analysis.committed,
+      analysis.allocated - analysis.committed,
       "",
     ],
   ];
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Analysis} analysis
+ * @returns {CsvRow[]}
+ */
 function vendorRows(plan, analysis) {
   const cur = plan.brief.currency;
-  const bookBy = (vendor) => analysis.sc.vendorDue[vendor.id];
+  /** @param {import("../core/model.js").Vendor} vendor */
+  const bookBy = (vendor) => isoOrEmpty(analysis.schedule.vendorDue[vendor.id]);
   return [
     [
       "Category",
@@ -87,7 +105,7 @@ function vendorRows(plan, analysis) {
       vendor.payment,
       vendor.estimate ?? "",
       vendor.quote ?? "",
-      bookBy(vendor) ? toIsoDate(bookBy(vendor)) : "",
+      bookBy(vendor),
       vendor.arrival,
       `${vendor.checklist.filter((item) => item.done).length}/${vendor.checklist.length}`,
       vendor.notes,
@@ -95,17 +113,25 @@ function vendorRows(plan, analysis) {
   ];
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Analysis} analysis
+ * @returns {CsvRow[]}
+ */
 function timelineRows(plan, analysis) {
-  const sched = analysis.sc;
+  const sched = analysis.schedule;
+  /** @param {string} id */
   const titleOf = (id) => plan.tasks.find((task) => task.id === id)?.title;
+  /** @param {Task} task */
   const status = (task) => {
     if (task.done) return "Done";
-    return sched.due[task.id] && sched.due[task.id] < sched.today ? "Overdue" : "Pending";
+    const due = sched.due[task.id];
+    return due && due < sched.today ? "Overdue" : "Pending";
   };
   return [
     ["Due date", "Phase", "Task", "Priority", "Status", "Depends on"],
     ...sortByDue(plan.tasks, sched).map((task) => [
-      sched.due[task.id] ? toIsoDate(sched.due[task.id]) : "",
+      isoOrEmpty(sched.due[task.id]),
       task.phase,
       task.title,
       task.priority,
@@ -115,8 +141,24 @@ function timelineRows(plan, analysis) {
   ];
 }
 
-const sortByDue = (tasks, sched) =>
-  tasks.slice().sort((a, b) => (sched.due[a.id] || 0) - (sched.due[b.id] || 0));
+/**
+ * A date as YYYY-MM-DD, or "" when there isn't one.
+ * @param {Date|null|undefined} date
+ * @returns {string}
+ */
+const isoOrEmpty = (date) => (date ? toIsoDate(date) : "");
+
+/**
+ * Tasks in due-date order; undated tasks first.
+ * @param {Task[]} tasks
+ * @param {Schedule} sched
+ * @returns {Task[]}
+ */
+const sortByDue = (tasks, sched) => {
+  /** @param {Task} task */
+  const dueTime = (task) => sched.due[task.id]?.getTime() ?? 0;
+  return tasks.slice().sort((a, b) => dueTime(a) - dueTime(b));
+};
 
 /**
  * A file-name-safe version of the event name.
@@ -132,11 +174,12 @@ export function fileBase(plan) {
   return base || "event";
 }
 
+/** @type {Promise<JsPdfNamespace>|null} */
 let jsPdfLoading = null;
 
 /**
  * Loads jsPDF from the CDN once, checked against its pinned integrity hash.
- * @returns {Promise<object>} the jspdf namespace
+ * @returns {Promise<JsPdfNamespace>} the jspdf namespace
  */
 export function loadJsPDF() {
   if (window.jspdf) return Promise.resolve(window.jspdf);
@@ -181,6 +224,7 @@ export function pdfSafe(text) {
 const PAGE_WIDTH = 595;
 const MARGIN = 48;
 const PAGE_BOTTOM = 800;
+/** @type {Readonly<Record<string, string>>} */
 const SOURCE_LABELS = {
   ai: "AI generated",
   template: "Template",
@@ -190,11 +234,13 @@ const SOURCE_LABELS = {
 
 /** A small cursor-based writer over a jsPDF document. */
 class PdfWriter {
+  /** @param {JsPdfDocument} doc */
   constructor(doc) {
     this.doc = doc;
     this.y = MARGIN;
   }
 
+  /** @param {number} height starts a new page when this much won't fit */
   ensureSpace(height) {
     if (this.y + height > PAGE_BOTTOM) {
       this.doc.addPage();
@@ -202,6 +248,13 @@ class PdfWriter {
     }
   }
 
+  /**
+   * Writes wrapped text and moves the cursor below it.
+   * @param {string} content
+   * @param {number} [size]
+   * @param {"normal"|"bold"} [style]
+   * @param {number} [indent]
+   */
   text(content, size = 10, style = "normal", indent = 0) {
     this.doc.setFont("helvetica", style);
     this.doc.setFontSize(size);
@@ -213,13 +266,18 @@ class PdfWriter {
     }
   }
 
+  /** @param {string} content */
   heading(content) {
     this.y += 8;
     this.text(content, 14, "bold");
     this.y += 2;
   }
 
-  /** One budget table row: category, share, amount, committed note. */
+  /**
+   * One budget table row.
+   * @param {[string, string, string, string]} cells category, share, amount, committed note
+   * @param {number} rowHeight
+   */
   budgetRow(cells, rowHeight) {
     const [category, share, amount, committed] = cells.map(pdfSafe);
     this.ensureSpace(14);
@@ -239,21 +297,28 @@ class PdfWriter {
 export async function buildPDF(plan) {
   const { jsPDF } = await loadJsPDF();
   const analysis = analyze(plan);
+  /** @type {Money} */
   const money = (amount) => formatMoneyPlain(amount, plan.brief.currency);
   const pdf = new PdfWriter(new jsPDF({ unit: "pt", format: "a4" }));
-  writeTitle(pdf, plan, analysis.sc, money);
+  writeTitle(pdf, plan, analysis.schedule, money);
   writeHealthAndRisks(pdf, analysis);
   writeBudgetTable(pdf, plan, analysis, money);
-  writeTimeline(pdf, plan, analysis.sc);
-  writeVendors(pdf, plan, analysis.sc, money);
+  writeTimeline(pdf, plan, analysis.schedule);
+  writeVendors(pdf, plan, analysis.schedule, money);
   writeIdeasAndRunOfShow(pdf, plan, money);
   return pdf.doc.output("blob");
 }
 
+/**
+ * @param {PdfWriter} pdf
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {Money} money
+ */
 function writeTitle(pdf, plan, sched, money) {
   const { brief } = plan;
   pdf.text(brief.name, 20, "bold");
-  const date = sched.ev ? formatDate(sched.ev) : "No date";
+  const date = sched.eventDate ? formatDate(sched.eventDate) : "No date";
   pdf.text(
     `${brief.type} | ${brief.city || "Location not set"} | ${date} | ${brief.guests} guests | ` +
       `Budget ${money(brief.budget)}`,
@@ -267,13 +332,17 @@ function writeTitle(pdf, plan, sched, money) {
   }
 }
 
+/**
+ * @param {PdfWriter} pdf
+ * @param {Analysis} analysis
+ */
 function writeHealthAndRisks(pdf, analysis) {
   pdf.heading(`Health score: ${analysis.health.score}/100`);
-  for (const comp of analysis.health.comps) {
-    const deductions = comp.ded.length
-      ? ` - ${comp.ded.map((d) => `-${d.pts} ${d.reason}`).join("; ")}`
+  for (const comp of analysis.health.components) {
+    const deductions = comp.deductions.length
+      ? ` - ${comp.deductions.map((d) => `-${d.points} ${d.reason}`).join("; ")}`
       : "";
-    pdf.text(`${comp.name}: ${comp.got}/${comp.max}${deductions}`, 9);
+    pdf.text(`${comp.name}: ${comp.score}/${comp.max}${deductions}`, 9);
   }
   pdf.heading("Risks");
   if (!analysis.risks.length) pdf.text("No rule-based risks found.", 9);
@@ -282,14 +351,25 @@ function writeHealthAndRisks(pdf, analysis) {
   }
 }
 
+/**
+ * @param {PdfWriter} pdf
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ */
 function writeTimeline(pdf, plan, sched) {
   pdf.heading("Timeline");
   for (const task of sortByDue(plan.tasks, sched)) {
-    const due = sched.due[task.id] ? toIsoDate(sched.due[task.id]) : "no date";
+    const due = isoOrEmpty(sched.due[task.id]) || "no date";
     pdf.text(`${task.done ? "[x]" : "[ ]"} ${due}  ${task.title} (${task.priority})`, 9);
   }
 }
 
+/**
+ * @param {PdfWriter} pdf
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {Money} money
+ */
 function writeVendors(pdf, plan, sched, money) {
   pdf.heading("Vendors");
   for (const vendor of plan.vendors) {
@@ -297,8 +377,8 @@ function writeVendors(pdf, plan, sched, money) {
       vendor.critical ? " (critical)" : "",
       `: ${vendor.status}, ${vendor.payment}`,
       vendor.name ? `, ${vendor.name}` : "",
-      isNumeric(vendor.quote) ? `, quote ${money(vendor.quote)}` : "",
-      sched.vendorDue[vendor.id] ? `, book by ${toIsoDate(sched.vendorDue[vendor.id])}` : "",
+      isNumeric(vendor.quote) ? `, quote ${money(Number(vendor.quote))}` : "",
+      sched.vendorDue[vendor.id] ? `, book by ${isoOrEmpty(sched.vendorDue[vendor.id])}` : "",
     ].join("");
     pdf.text(`${vendor.category}${details}`, 9, "bold");
     for (const item of vendor.checklist) {
@@ -307,6 +387,11 @@ function writeVendors(pdf, plan, sched, money) {
   }
 }
 
+/**
+ * @param {PdfWriter} pdf
+ * @param {Plan} plan
+ * @param {Money} money
+ */
 function writeIdeasAndRunOfShow(pdf, plan, money) {
   pdf.heading("Ideas");
   for (const idea of plan.ideas) {
@@ -324,6 +409,12 @@ function writeIdeasAndRunOfShow(pdf, plan, money) {
   }
 }
 
+/**
+ * @param {PdfWriter} pdf
+ * @param {Plan} plan
+ * @param {Analysis} analysis
+ * @param {Money} money
+ */
 function writeBudgetTable(pdf, plan, analysis, money) {
   pdf.heading("Budget");
   const pcts = pctList(
@@ -341,7 +432,7 @@ function writeBudgetTable(pdf, plan, analysis, money) {
     [
       "Total",
       `${sum(pcts).toFixed(1)}%`,
-      money(analysis.alloc),
+      money(analysis.allocated),
       `committed ${money(analysis.committed)}`,
     ],
     14,

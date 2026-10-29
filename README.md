@@ -115,8 +115,9 @@ npm run build:check    # fails if dist/ is out of date with the source
 ## Tests
 
 ```bash
-npm test               # lint + build check + unit tests with coverage + browser tests on both builds
+npm test               # lint + type check + build check + unit tests with coverage + browser tests on both builds
 npm run lint           # ESLint (quality limits and layer rules)
+npm run typecheck      # strict TypeScript check of the JSDoc types
 npm run format:check   # Prettier
 npm run test:unit      # node:test unit tests
 npm run test:coverage  # unit tests; fails below 95% lines, 85% branches, 95% functions

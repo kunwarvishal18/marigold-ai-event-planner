@@ -29,7 +29,7 @@ import { bindPage, domView, savedTab } from "./ui/controller.js";
  * Requests one host capability. Each is requested on its own, so a downloads failure can't take
  * the Claude connection down with it.
  * @param {string} name e.g. "sample", "downloads"
- * @returns {Promise<object|null>}
+ * @returns {Promise<unknown>} whatever the host returned, or null
  */
 async function useCapability(name) {
   try {
@@ -38,6 +38,19 @@ async function useCapability(name) {
     return null;
   }
 }
+
+/**
+ * @param {unknown} value
+ * @returns {value is ClaudeSampleCapability}
+ */
+const isSampleCapability = (value) => typeof value === "function";
+
+/**
+ * @param {unknown} value
+ * @returns {value is ClaudeDownloadsCapability}
+ */
+const isDownloadsCapability = (value) =>
+  !!value && typeof value === "object" && typeof Reflect.get(value, "save") === "function";
 
 /** Restores the last open plan, or shows an empty brief. */
 function restoreLastPlan() {
@@ -53,18 +66,21 @@ function restoreLastPlan() {
   return lastPlan;
 }
 
-/** Connects to Claude and file downloads, if the host offers them. */
+/**
+ * Connects to Claude and file downloads, if the host offers them.
+ * @param {boolean} hasPlan
+ */
 async function connectHost(hasPlan) {
   setConnection("checking");
   const [sample, downloads] = await Promise.all([
     useCapability("sample"),
     useCapability("downloads"),
   ]);
-  state.sample = sample;
-  state.downloads = downloads;
-  setConnection(sample ? "on" : "off");
+  state.sample = isSampleCapability(sample) ? sample : null;
+  state.downloads = isDownloadsCapability(downloads) ? downloads : null;
+  setConnection(state.sample ? "on" : "off");
   view.render();
-  if (!hasPlan && !sample) {
+  if (!hasPlan && !state.sample) {
     view.setFormHint(
       "Claude isn't available in this view, so new plans use templates and are labelled that way.",
     );
@@ -87,6 +103,7 @@ window.MarigoldTest = {
   validateGen,
   validateChat,
   extractJSON,
-  makeProposal: (spec) => proposeChange(spec),
+  makeProposal: (/** @type {import("./core/proposal.js").ProposalSpec} */ spec) =>
+    proposeChange(spec),
   state: () => state,
 };

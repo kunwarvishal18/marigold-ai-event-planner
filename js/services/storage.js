@@ -17,10 +17,18 @@ import { view } from "./view.js";
 /** Older undo snapshots are dropped when storage is full. */
 const HISTORY_KEPT_WHEN_FULL = 2;
 
-/** What the UI should tell the person about stored data. */
+/** @typedef {import("../core/model.js").Plan} Plan */
+
+/**
+ * What the UI should tell the person about stored data.
+ * @type {{corrupt: boolean, backupKey: string|null, readOnly: boolean}}
+ */
 export const storageState = { corrupt: false, backupKey: null, readOnly: false };
 
-/** Copies unreadable data to a backup key; if that fails, stops all writes. */
+/**
+ * Copies unreadable data to a backup key; if that fails, stops all writes.
+ * @param {string} raw
+ */
 function quarantine(raw) {
   if (storageState.corrupt) return;
   const backupKey = `${STORAGE_KEYS.plans}.corrupt-${Date.now()}`;
@@ -34,6 +42,7 @@ function quarantine(raw) {
  * @returns {Record<string, unknown>} an object without a prototype, so ids like "__proto__" are safe
  */
 export function allPlans() {
+  /** @type {Record<string, unknown>} */
   const plans = Object.create(null);
   if (storageState.readOnly) return plans;
   const raw = localStore.raw(STORAGE_KEYS.plans);
@@ -48,9 +57,16 @@ export function allPlans() {
   return plans;
 }
 
-/** The last parse, reused while the stored text is unchanged. Callers never mutate its plans. */
+/**
+ * The last parse, reused while the stored text is unchanged. Callers never mutate its plans.
+ * @type {{raw: string|undefined, parsed: unknown}}
+ */
 let parseCache = { raw: undefined, parsed: undefined };
 
+/**
+ * @param {string} raw
+ * @returns {unknown} the parsed value, or undefined when the text isn't JSON
+ */
 function parseStored(raw) {
   if (raw !== parseCache.raw) {
     let parsed;
@@ -76,6 +92,7 @@ export function getPlan(id) {
 
 /**
  * Replaces every stored plan.
+ * @param {Record<string, unknown>} plans
  * @returns {boolean} false when saving is paused or storage refused the write
  */
 function writeAll(plans) {
@@ -85,6 +102,7 @@ function writeAll(plans) {
 
 /**
  * Deletes one stored plan.
+ * @param {string} id
  * @returns {boolean} false if the change couldn't be saved
  */
 export function deleteStoredPlan(id) {
@@ -95,8 +113,9 @@ export function deleteStoredPlan(id) {
 
 /** Saves the open plan, trimming undo history if storage is full. Reports problems as toasts. */
 export function savePlan() {
-  if (!state.plan) return;
-  state.plan.updatedAt = Date.now();
+  const open = state.plan;
+  if (!open) return;
+  open.updatedAt = Date.now();
   if (storageState.readOnly) {
     view.toast(
       "Saving is paused: saved data on this device couldn't be read or backed up, so Marigold " +
@@ -108,17 +127,17 @@ export function savePlan() {
   }
 
   const plans = allPlans();
-  plans[state.plan.id] = state.plan;
+  plans[open.id] = open;
   let saved = writeAll(plans);
   if (!saved) {
     // Storage is full: keep only the newest undo snapshots of every plan (copies, so the cached
     // parse of the stored text is never modified) and try once more.
     for (const [id, plan] of Object.entries(plans)) {
-      if (plan && Array.isArray(plan.history)) {
+      if (isPlainObject(plan) && Array.isArray(plan.history)) {
         plans[id] = { ...plan, history: plan.history.slice(0, HISTORY_KEPT_WHEN_FULL) };
       }
     }
-    state.plan.history = plans[state.plan.id].history;
+    open.history = open.history.slice(0, HISTORY_KEPT_WHEN_FULL);
     saved = writeAll(plans);
   }
   if (!saved) {
@@ -128,28 +147,35 @@ export function savePlan() {
       true,
     );
   }
-  localStore.set(STORAGE_KEYS.lastPlanId, state.plan.id);
+  localStore.set(STORAGE_KEYS.lastPlanId, open.id);
   view.renderSection("saved");
 }
 
-/** The last summary, reused while the stored text is unchanged. */
+/** @typedef {{plans: Plan[], newer: number, invalid: number}} StoredPlanSummary */
+
+/**
+ * The last summary, reused while the stored text is unchanged.
+ * @type {{raw: string|null|undefined, summary: StoredPlanSummary|null}}
+ */
 let summaryCache = { raw: undefined, summary: null };
 
 /**
  * The plans that can be listed, plus counts of stored entries that are kept but not shown.
  * Parsing and validating every stored plan is the costliest part of a render, so the result is
  * cached against the raw stored text and recomputed only when storage actually changes.
- * @returns {{plans: import("../core/model.js").Plan[], newer: number, invalid: number}}
+ * @returns {StoredPlanSummary}
  */
 export function storedPlanSummary() {
   const raw = storageState.readOnly ? null : localStore.raw(STORAGE_KEYS.plans);
   if (raw === summaryCache.raw && summaryCache.summary) return summaryCache.summary;
+  /** @type {StoredPlanSummary} */
   const summary = { plans: [], newer: 0, invalid: 0 };
   for (const plan of Object.values(allPlans())) {
     const clean = sanePlan(plan);
     if (clean) summary.plans.push(clean);
-    else if (isPlainObject(plan) && isNumeric(plan.v) && +plan.v > PLAN_VERSION) summary.newer++;
-    else summary.invalid++;
+    else if (isPlainObject(plan) && isNumeric(plan.v) && Number(plan.v) > PLAN_VERSION) {
+      summary.newer++;
+    } else summary.invalid++;
   }
   summary.plans.sort((a, b) => b.updatedAt - a.updatedAt);
   summaryCache = { raw, summary };
@@ -162,12 +188,14 @@ export function storedPlanSummary() {
  */
 export function migrateV1() {
   const legacy = localStore.get(STORAGE_KEYS.legacyPlans, null);
-  if (!legacy || localStore.get(STORAGE_KEYS.migrated, false)) return;
+  if (!isPlainObject(legacy) || localStore.get(STORAGE_KEYS.migrated, false)) return;
   const plans = allPlans();
   for (const old of Object.values(legacy)) {
     try {
-      if (!old || !old.plan || !old.brief || old.example) continue;
-      const plan = convertV1Plan(old);
+      if (!isPlainObject(old) || !old.plan || !old.brief || old.example) continue;
+      // Unchecked v1 data: anything missing makes the conversion throw, and the plan is skipped.
+      // What is converted is validated by sanePlan() whenever it is read.
+      const plan = convertV1Plan(/** @type {LegacyPlan} */ (old));
       plans[plan.id] = plan;
     } catch {
       // Leave plans that can't be converted where they are.
@@ -176,17 +204,38 @@ export function migrateV1() {
   if (writeAll(plans)) localStore.set(STORAGE_KEYS.migrated, true);
 }
 
+/**
+ * The shape Marigold v1 stored (not validated; see migrateV1).
+ * @typedef {object} LegacyPlan
+ * @property {import("../core/model.js").Brief} brief
+ * @property {number} [savedAt]
+ * @property {Record<string, boolean>} [done] ticked tasks by "t<stage>.<task>"
+ * @property {unknown[]} [actual] spend per budget line
+ * @property {object} plan
+ * @property {string} plan.summary
+ * @property {Array<{category: string, pct: unknown, note: string}>} plan.budget
+ * @property {Array<{category: string, checklist: string[], questions: string[]}>} plan.vendors
+ * @property {import("../core/validation.js").IdeaSpec[]} [plan.ideas]
+ * @property {Array<{title: string, weeksBefore: unknown, tasks: string[]}>} plan.timeline
+ */
+
+/**
+ * @param {LegacyPlan} old
+ * @returns {Plan}
+ */
 function convertV1Plan(old) {
+  /** @type {import("../core/validation.js").GeneratedPlan} */
   const data = {
     summary: old.plan.summary,
     budget: old.plan.budget.map((line) => ({
       category: line.category,
-      pct: +line.pct || 0,
+      pct: Number(line.pct) || 0,
       note: line.note,
     })),
     tasks: [],
     vendors: old.plan.vendors.map((vendor) => ({
       category: vendor.category,
+      critical: false,
       checklist: vendor.checklist,
       questions: vendor.questions,
       bookByDaysBefore: 30,
@@ -199,7 +248,7 @@ function convertV1Plan(old) {
         key: `t${i}.${j}`,
         title,
         phase: stage.title,
-        daysBefore: (+stage.weeksBefore || 0) * 7,
+        daysBefore: (Number(stage.weeksBefore) || 0) * 7,
         priority: "medium",
         dependsOn: [],
       }),
@@ -219,7 +268,7 @@ function convertV1Plan(old) {
   );
   plan.budget.forEach((line, i) => {
     const spent = old.actual && old.actual[i];
-    if (isNumeric(spent)) line.committed = +spent;
+    if (isNumeric(spent)) line.committed = Number(spent);
   });
   return plan;
 }

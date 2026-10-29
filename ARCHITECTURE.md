@@ -10,9 +10,9 @@ Marigold is a client-only web app. There is no backend, no database server and n
 | Checking every Claude answer against a schema, with one retry that tells Claude what was wrong           | Code                           | `core/validation.js`, `askClaudeForJSON()` in `services/claude.js` |
 | Budget arithmetic (exact whole-number totals, committed spend as a floor, percentages that sum to 100.0) | Code                           | `core/budget.js`                                                   |
 | Dates, scheduling, compression for short runways, dependency order, loop removal                         | Code                           | `core/dates.js`, `core/scheduler.js`                               |
-| Risk rules and the 0–100 health score (5 areas × 20 points)                                              | Code                           | `core/risks.js`                                                    |
+| Risk rules and the 0–100 health score (5 areas × 20 points)                                              | Code                           | `core/risks.js`, `core/health.js`                                  |
 | "Do next": dependency-aware ranking of ready tasks and vendor deadlines, with reasons                    | Code                           | `core/advisor.js`                                                  |
-| Turning a requested change into a checked before/after preview                                           | Code                           | `core/proposal.js`                                                 |
+| Turning a requested change into a checked before/after preview                                           | Code                           | `core/proposal.js`, `core/plan-diff.js`                            |
 | Apply, reject, undo, and stale-proposal detection                                                        | Code, with the user's approval | `actions/history.js`                                               |
 | Saving, loading, migrating and sanitising plans                                                          | Code                           | `services/storage.js`                                              |
 
@@ -33,7 +33,7 @@ js/
 
 ```mermaid
 flowchart BT
-  CORE["core/<br/>budget, dates, scheduler, risks, advisor,<br/>model, proposal, validation, safety, templates"]
+  CORE["core/<br/>budget, dates, scheduler, risks, health, advisor,<br/>model, proposal, plan-diff, validation, safety, templates"]
   SERVICES["services/<br/>state, storage, claude, prompts, export, view port"]
   ACTIONS["actions/<br/>assistant (Claude requests), history (apply/undo), plans"]
   UI["ui/<br/>render, form, tabs, proposal panel, toast, controller"]
@@ -46,6 +46,15 @@ How this is enforced:
 - **ESLint** (`eslint.config.js`) forbids imports from a higher layer (`no-restricted-imports`) and browser APIs inside `core/` (`no-restricted-globals`). Logic in `services/` and `actions/` may not touch `document`.
 - **The build** (`scripts/build.mjs`) refuses to bundle an import cycle.
 - **A unit test** (`tests/unit/architecture.test.js`) walks the import graph and fails on a cycle, an upward import, or a browser API in `core/`.
+
+## Types
+
+The code is plain JavaScript with JSDoc types, checked by TypeScript in strict mode (`npm run typecheck`, `jsconfig.json`; host globals such as `window.claude` and jsPDF are declared in `types/globals.d.ts`). CI fails on any type error.
+
+- The plan model (`Plan`, `Brief`, `BudgetLine`, `Task`, `Vendor`, …) lives in `core/model.js`. The fixed vocabularies (priorities, item origins, plan sources, chat roles, severities) are `const` lists in `core/constants.js`, and the matching types are derived from them, so a list and its type can't drift apart. `isOneOf()` and `oneOf()` check untrusted values against those lists.
+- Data from outside the app (Claude replies, browser storage, proposals) is typed `unknown` until a validator or `sanePlan()` has rebuilt it field by field.
+- `ui/dom.js` looks elements up with runtime checks: `$()` throws if a required element is missing, `find()` is for optional ones, and `field()` / `$as()` check the element type before `.value` or `.disabled` is used. `requirePlan()` in `services/state.js` returns the open plan for code that only runs while one is open.
+- The only type assertions are `const` assertions on literal lists and one documented cast of unchecked v1 data in `migrateV1()` (the converted plan is validated by `sanePlan()` whenever it is read).
 
 ### The view port (dependency inversion)
 
@@ -60,12 +69,14 @@ Logic often needs to tell the page something ("show this toast", "re-render the 
 | `core/format.js`          | `escapeHtml`, money and date formatting                                       |
 | `core/constants.js`       | Vendor stages, payment states, priorities, severities, contingency pattern    |
 | `core/budget.js`          | `fitToTotal` (exact allocation), `pctList` (shares that sum to 100.0)         |
-| `core/scheduler.js`       | Due dates, compression, dependency order, `breakCycles`                       |
-| `core/risks.js`           | Budget, timeline, vendor and event risk rules; health score                   |
+| `core/scheduler.js`       | Due dates, compression, dependency order, `breakCycles`, `daysToBook`         |
+| `core/risks.js`           | Budget, timeline, vendor and event risk rules (`analyze`)                     |
+| `core/health.js`          | The health score: five components, deductions with reasons and actions        |
 | `core/advisor.js`         | "Do next" ranking with reasons                                                |
 | `core/model.js`           | Plan data model, `buildPlan`, `newVendor`                                     |
 | `core/plan-sanitizer.js`  | `sanePlan`: rebuilds stored plans and undo snapshots from allow-listed values |
-| `core/proposal.js`        | `makeProposal` (apply a change to a copy and check it), `diffPlans`           |
+| `core/proposal.js`        | `makeProposal`: apply a requested change to a copy and check it               |
+| `core/plan-diff.js`       | `diffPlans`: the before/after comparison shown for approval                   |
 | `core/validation.js`      | Schemas for every Claude reply                                                |
 | `core/safety.js`          | `extractJSON`, reply size cap, data fencing for prompts, jsPDF SRI pin        |
 | `core/template-data.js`   | Built-in starter content per event type                                       |
@@ -79,9 +90,11 @@ Logic often needs to tell the page something ("show this toast", "re-render the 
 | `services/prompts.js`     | Prompt builders for generation, chat, optimizer, ideas and risk review        |
 | `services/export.js`      | CSV (with formula-injection protection) and PDF export                        |
 | `actions/assistant.js`    | Generate, optimise, more ideas, AI risk review, co-planner chat               |
-| `actions/history.js`      | Show/apply/reject proposals, direct edits (`commit`), undo                    |
+| `actions/history.js`      | Show/apply/reject proposals, direct edits (`commit`, `commitQuietly`), undo   |
 | `actions/plans.js`        | Open, create, review details, delete, sample plan                             |
+| `ui/dom.js`               | Checked element lookups (`$`, `find`, `field`, `$as`), `setHtml`, `onEach`    |
 | `ui/focus.js`             | Keeps keyboard focus on the edited control across re-renders (WCAG 2.4.3)     |
+| `ui/vendor-card.js`       | Markup for one vendor card; `ui/vendors-tab.js` wires its events              |
 | `ui/*.js`                 | One module per area: form, saved plans, proposal panel, each tab, export menu |
 
 ## Accessibility

@@ -19,7 +19,7 @@ const MUTANTS = [
   [
     "committed spend as a floor",
     "js/core/budget.js",
-    "const floorOf = targets.map((_, i) => Math.max(0, Math.ceil(+floors[i] || 0)));",
+    "const floorOf = targets.map((_, i) => Math.max(0, Math.ceil(Number(floors[i]) || 0)));",
     "const floorOf = targets.map(() => 0);",
   ],
   [
@@ -31,8 +31,8 @@ const MUTANTS = [
   [
     "AI proposals can only set a known currency",
     "js/core/proposal.js",
-    "valid: (v) => CURRENCIES.includes(v)",
-    "valid: () => true",
+    '["currency", (value) => isOneOf(value, CURRENCIES),',
+    '["currency", (value) => typeof value === "string",',
   ],
   [
     "stored priorities are allow-listed",

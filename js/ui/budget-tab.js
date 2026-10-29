@@ -3,24 +3,39 @@
  * and the budget optimizer.
  */
 import { optimize } from "../actions/assistant.js";
-import { commit, markProposalStale, proposeChange, showProposal } from "../actions/history.js";
+import {
+  commitQuietly,
+  markProposalStale,
+  proposeChange,
+  showProposal,
+} from "../actions/history.js";
 import { pctList } from "../core/budget.js";
 import { isContingency } from "../core/constants.js";
-import { escapeHtml, formatMoney } from "../core/format.js";
+import { escapeHtml, moneyIn } from "../core/format.js";
 import { MAX_AMOUNT, sum } from "../core/util.js";
 import { analyze } from "../core/risks.js";
 import { isClaudeOn } from "../services/claude.js";
-import { state } from "../services/state.js";
+import { requirePlan, state } from "../services/state.js";
 import { savePlan } from "../services/storage.js";
 import { view } from "../services/view.js";
 import { renderProposal } from "./proposal-panel.js";
 import { toast } from "./toast.js";
-import { $, attrIf, onEach, setHtml, showInlineError } from "./dom.js";
+import { $, asField, attrIf, field, onEach, setHtml, showInlineError } from "./dom.js";
+
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/model.js").BudgetLine} BudgetLine */
+/** @typedef {(amount: number|null) => string} Money */
 
 const PRESET_SAVINGS = [10, 15, 20];
 const MIN_SAVING_PCT = 1;
 const MAX_SAVING_PCT = 60;
 
+/**
+ * @param {BudgetLine} line
+ * @param {number} pct share of the total budget
+ * @param {Money} money
+ * @returns {string}
+ */
 function budgetRow(line, pct, money) {
   const committed = line.committed || 0;
   const over = committed > line.amount;
@@ -44,6 +59,12 @@ function budgetRow(line, pct, money) {
   </tr>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @param {import("../core/risks.js").Analysis} analysis
+ * @param {Money} money
+ * @returns {string}
+ */
 function allocationTable(plan, analysis, money) {
   const { brief } = plan;
   const pcts = pctList(
@@ -52,7 +73,7 @@ function allocationTable(plan, analysis, money) {
   );
   const left = brief.budget - analysis.committed;
   const balance =
-    analysis.alloc === brief.budget
+    analysis.allocated === brief.budget
       ? '<span class="pos">Fully allocated</span>'
       : '<span class="neg">Not balanced</span>';
   return `<div class="tablewrap"><table>
@@ -62,7 +83,7 @@ function allocationTable(plan, analysis, money) {
     <tfoot><tr>
       <th>Total</th>
       <th class="num">${sum(pcts).toFixed(1)}%</th>
-      <th class="num">${money(analysis.alloc)}</th>
+      <th class="num">${money(analysis.allocated)}</th>
       <th class="num">${money(analysis.committed)}</th>
       <th class="num ${left < 0 ? "neg" : ""}">${money(left)}</th>
       <th>${balance}</th>
@@ -70,6 +91,7 @@ function allocationTable(plan, analysis, money) {
   </table></div>`;
 }
 
+/** @returns {string} */
 function optimizerCard() {
   const busy = !!state.busy.opt;
   const presets = PRESET_SAVINGS.map(
@@ -104,8 +126,8 @@ function optimizerCard() {
  * @param {import("../core/risks.js").Analysis} analysis
  */
 export function renderBudget(analysis) {
-  const plan = state.plan;
-  const money = (amount) => formatMoney(amount, plan.brief.currency);
+  const plan = requirePlan();
+  const money = moneyIn(plan.brief.currency);
   const left = plan.brief.budget - analysis.committed;
   const panel = $("#panel-budget");
   setHtml(
@@ -117,31 +139,32 @@ export function renderBudget(analysis) {
   );
   onEach("[data-commit]", "change", recordCommitted, panel);
   onEach("[data-alloc]", "change", proposeAllocation, panel);
-  onEach("[data-save]", "click", (button) => optimize(+button.dataset.save), panel);
+  onEach("[data-save]", "click", (button) => optimize(Number(button.dataset.save)), panel);
   $("#saveGo").addEventListener("click", optimizeCustom);
-  $("#saveProtect").addEventListener("input", (event) => {
-    state.protect = event.target.value;
+  const protect = field("#saveProtect");
+  protect.addEventListener("input", () => {
+    state.protect = protect.value;
   });
 }
 
-/** Records committed spend (a fact, not a plan change, so it isn't a proposal). */
+/**
+ * Records committed spend (a fact, not a plan change, so it isn't a proposal).
+ * @param {HTMLElement} input the Committed field of one budget line
+ */
 function recordCommitted(input) {
-  const text = input.value.trim();
-  const amount = text === "" ? null : Math.round(+text);
+  const text = asField(input).value.trim();
+  const amount = text === "" ? null : Math.round(Number(text));
   if (amount != null && (!Number.isFinite(amount) || amount < 0 || amount > MAX_AMOUNT)) {
     toast("Committed spend must be a number from 0 to 1 trillion.", true);
     view.render();
     return;
   }
-  commit(
-    "Recorded spend",
-    (plan) => {
-      plan.budget.find((line) => line.id === input.dataset.commit).committed = amount;
-    },
-    { structural: false },
-  );
+  commitQuietly("Recorded spend", (plan) => {
+    const line = plan.budget.find((budgetLine) => budgetLine.id === input.dataset.commit);
+    if (line) line.committed = amount;
+  });
   // Committed spend changes what a pending proposal may cut, so it becomes stale.
-  state.plan.rev++;
+  requirePlan().rev++;
   savePlan();
   if (state.proposal) {
     markProposalStale();
@@ -149,13 +172,17 @@ function recordCommitted(input) {
   }
 }
 
-/** A new allocation for one line becomes a proposal that rebalances the others. */
+/**
+ * A new allocation for one line becomes a proposal that rebalances the others.
+ * @param {HTMLElement} input the Allocated field of one budget line
+ */
 function proposeAllocation(input) {
-  const plan = state.plan;
+  const plan = requirePlan();
   const { brief } = plan;
-  const money = (amount) => formatMoney(amount, brief.currency);
+  const money = moneyIn(brief.currency);
   const line = plan.budget.find((x) => x.id === input.dataset.alloc);
-  const amount = Math.round(+input.value);
+  if (!line) return;
+  const amount = Math.round(Number(asField(input).value));
   let problem = null;
   if (!Number.isFinite(amount) || amount < 0) problem = "Allocation must be 0 or more.";
   else if (amount > brief.budget) {
@@ -183,11 +210,12 @@ function proposeAllocation(input) {
       changes: { budget: lines },
     }),
   );
-  renderBudget(analyze(state.plan));
+  renderBudget(analyze(plan));
 }
 
+/** Runs the optimizer with the custom savings percentage, if it is in range. */
 function optimizeCustom() {
-  const pct = +$("#saveCustom").value;
+  const pct = Number(field("#saveCustom").value);
   if (!(pct >= MIN_SAVING_PCT && pct <= MAX_SAVING_PCT)) {
     showInlineError("optErr", "Enter a savings target from 1% to 60%.");
     return;

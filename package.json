@@ -11,11 +11,12 @@
     "lint": "eslint .",
     "format": "npx --yes prettier@3.8.1 --write .",
     "format:check": "npx --yes prettier@3.8.1 --check .",
+    "typecheck": "npx --yes -p typescript@7.0.2 tsc -p jsconfig.json",
     "test:unit": "node --test tests/unit/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"js/core/**\" --test-coverage-include=\"js/services/**\" --test-coverage-include=\"js/actions/**\" --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 tests/unit/*.test.js",
     "test:mutation": "node scripts/mutation-check.mjs",
     "test:e2e": "node tests/e2e/browser.test.mjs",
-    "test": "npm run lint && npm run build:check && npm run test:coverage && npm run test:e2e",
+    "test": "npm run lint && npm run typecheck && npm run build:check && npm run test:coverage && npm run test:e2e",
     "audit": "npm audit --audit-level=high",
     "bench": "node scripts/bench.mjs",
     "screenshots": "node scripts/screenshots.mjs"

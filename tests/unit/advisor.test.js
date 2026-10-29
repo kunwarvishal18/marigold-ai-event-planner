@@ -20,7 +20,7 @@ function fixture(tasks, vendors = [], eventInDays = 60) {
   };
   for (const t of tasks) if (t.in != null) due[t.id] = addDays(t0, t.in);
   for (const v of vendors) if (v.in != null) vendorDue[v.id] = addDays(t0, v.in);
-  return [p, { today: t0, ev: addDays(t0, eventInDays), due, vendorDue }];
+  return [p, { today: t0, eventDate: addDays(t0, eventInDays), due, vendorDue }];
 }
 
 test("blocked tasks are never suggested; their prerequisite is", () => {

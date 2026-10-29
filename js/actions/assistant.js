@@ -3,8 +3,9 @@
  * review and the co-planner chat. Each request is numbered; a reply is used only if no newer
  * request of the same kind has started and the same plan is still open.
  */
+import { PLAN_LIMITS } from "../core/constants.js";
 import { daysBetween, parseIsoDate, today } from "../core/dates.js";
-import { formatMoney } from "../core/format.js";
+import { moneyIn } from "../core/format.js";
 import { buildPlan } from "../core/model.js";
 import { clip, normalizeName, plural, sum, uid } from "../core/util.js";
 import {
@@ -14,7 +15,7 @@ import {
   validateIdeas,
   validateRiskReview,
 } from "../core/validation.js";
-import { askClaudeForJSON, errorMessage, isClaudeOn } from "../services/claude.js";
+import { askClaudeForJSON, errorCode, errorMessage, isClaudeOn } from "../services/claude.js";
 import {
   chatPrompt,
   generationPrompt,
@@ -22,14 +23,13 @@ import {
   optimizerPrompt,
   riskReviewPrompt,
 } from "../services/prompts.js";
-import { isCurrentReply, isLatest, startRequest, state } from "../services/state.js";
+import { isCurrentReply, isLatest, requirePlan, startRequest, state } from "../services/state.js";
 import { savePlan } from "../services/storage.js";
 import { view } from "../services/view.js";
-import { commit, proposeChange, showProposal } from "./history.js";
+import { commitQuietly, proposeChange, showProposal } from "./history.js";
 import { createTemplate, logEntryFor, openPlan } from "./plans.js";
 
 const MAX_CHAT_MESSAGE = 1200;
-const MAX_CHAT_KEPT = 60;
 const MAX_NOTE = 120;
 
 /**
@@ -45,7 +45,8 @@ export async function generate(brief, fresh) {
   }
   const seq = startRequest("gen");
   state.busy.gen = true;
-  state.ctl.gen = new AbortController();
+  const controller = new AbortController();
+  state.abortControllers.gen = controller;
   view.showGenerationProgress();
   view.renderSection("form");
 
@@ -55,7 +56,7 @@ export async function generate(brief, fresh) {
     const data = await askClaudeForJSON(
       generationPrompt(brief),
       (reply, context) => validateGen(reply, daysLeft, context),
-      { signal: state.ctl.gen.signal, tier: "default" },
+      { signal: controller.signal, tier: "default" },
     );
     if (!isLatest("gen", seq)) return;
 
@@ -85,7 +86,7 @@ export async function generate(brief, fresh) {
     view.toast("Your AI plan is ready.");
   } catch (error) {
     if (!isLatest("gen", seq)) return;
-    view.showGenerationError(errorMessage(error), error.code !== "cancelled", fresh);
+    view.showGenerationError(errorMessage(error), errorCode(error) !== "cancelled", fresh);
   } finally {
     if (isLatest("gen", seq)) {
       state.busy.gen = false;
@@ -101,11 +102,11 @@ export async function generate(brief, fresh) {
  */
 export async function optimize(pct) {
   if (state.busy.opt) return;
-  const plan = state.plan;
+  const plan = requirePlan();
   const total = plan.brief.budget;
   const target = Math.round(total * (1 - pct / 100));
   const committed = sum(plan.budget.map((line) => line.committed || 0));
-  const money = (amount) => formatMoney(amount, plan.brief.currency);
+  const money = moneyIn(plan.brief.currency);
 
   if (target < committed) {
     view.showInlineError(
@@ -116,19 +117,7 @@ export async function optimize(pct) {
   }
 
   if (!isClaudeOn()) {
-    const lines = plan.budget.map((line) => ({ category: line.category, amount: line.amount }));
-    showProposal(
-      proposeChange({
-        origin: "rule",
-        kind: "optimize",
-        title: `Save ${pct}% (rule-based)`,
-        explanation:
-          "Claude isn't available, so every category is cut in proportion to its uncommitted " +
-          `amount. New total ${money(target)}, saving ${money(total - target)}.`,
-        tradeoffs: ["A proportional cut doesn't consider which areas matter most to you."],
-        changes: { brief: { budget: target }, budget: lines },
-      }),
-    );
+    showProposal(proportionalCut(plan, pct, target));
     return;
   }
 
@@ -164,10 +153,32 @@ export async function optimize(pct) {
   }
 }
 
+/**
+ * The rule-based saving used without Claude: every category is cut in proportion.
+ * @param {import("../core/model.js").Plan} plan
+ * @param {number} pct
+ * @param {number} target the new total
+ * @returns {import("../core/proposal.js").Proposal}
+ */
+function proportionalCut(plan, pct, target) {
+  const money = moneyIn(plan.brief.currency);
+  const lines = plan.budget.map((line) => ({ category: line.category, amount: line.amount }));
+  return proposeChange({
+    origin: "rule",
+    kind: "optimize",
+    title: `Save ${pct}% (rule-based)`,
+    explanation:
+      "Claude isn't available, so every category is cut in proportion to its uncommitted " +
+      `amount. New total ${money(target)}, saving ${money(plan.brief.budget - target)}.`,
+    tradeoffs: ["A proportional cut doesn't consider which areas matter most to you."],
+    changes: { brief: { budget: target }, budget: lines },
+  });
+}
+
 /** Asks Claude for four more ideas and adds the new ones. */
 export async function moreIdeas() {
   if (state.busy.ideas || !isClaudeOn()) return;
-  const plan = state.plan;
+  const plan = requirePlan();
   const planId = plan.id;
   const seq = startRequest("ideas");
   state.busy.ideas = true;
@@ -179,16 +190,14 @@ export async function moreIdeas() {
     });
     if (!isCurrentReply("ideas", seq, planId)) return;
 
-    const known = new Set(state.plan.ideas.map((idea) => normalizeName(idea.title)));
+    const known = new Set(requirePlan().ideas.map((idea) => normalizeName(idea.title)));
     const fresh = ideas.filter((idea) => !known.has(normalizeName(idea.title)));
     if (!fresh.length) {
       view.toast("Claude only suggested ideas you already have. Try a different focus.");
       return;
     }
-    commit(
-      `Added ${fresh.length} AI ideas`,
-      (draft) => fresh.forEach((idea) => draft.ideas.push({ id: uid(), ...idea, origin: "ai" })),
-      { structural: false },
+    commitQuietly(`Added ${fresh.length} AI ideas`, (draft) =>
+      fresh.forEach((idea) => draft.ideas.push({ id: uid(), ...idea, origin: "ai" })),
     );
     view.toast(`${fresh.length} new ${plural(fresh.length, "idea", "ideas")} added.`);
   } catch (error) {
@@ -204,7 +213,7 @@ export async function moreIdeas() {
 /** Asks Claude for contextual risks and stores them with the plan (advice only, no score change). */
 export async function aiRiskReview() {
   if (state.busy.risks || !isClaudeOn()) return;
-  const plan = state.plan;
+  const plan = requirePlan();
   const planId = plan.id;
   const rev = plan.rev;
   const seq = startRequest("risks");
@@ -215,7 +224,7 @@ export async function aiRiskReview() {
       tier: "default",
     });
     if (!isCurrentReply("risks", seq, planId)) return;
-    state.plan.aiRisks = { at: Date.now(), rev, items: risks };
+    requirePlan().aiRisks = { at: Date.now(), rev, items: risks };
     savePlan();
   } catch (error) {
     if (isLatest("risks", seq)) view.toast(errorMessage(error), true);
@@ -238,45 +247,58 @@ export async function sendChat(message) {
     view.toast("The co-planner needs Claude.", true);
     return;
   }
-  const plan = state.plan;
+  const plan = requirePlan();
   const planId = plan.id;
   const seq = startRequest("chat");
   const prompt = chatPrompt(plan, text);
   plan.chat.push({ role: "user", text, at: Date.now() });
-  plan.chat = plan.chat.slice(-MAX_CHAT_KEPT);
+  plan.chat = plan.chat.slice(-PLAN_LIMITS.chat);
   view.clearChatInput();
   state.busy.chat = true;
-  state.ctl.chat = new AbortController();
+  const controller = new AbortController();
+  state.abortControllers.chat = controller;
   savePlan();
   view.renderSection("chat");
 
+  /** @type {import("../core/proposal.js").Proposal|null} */
   let proposal = null;
   try {
     const reply = await askClaudeForJSON(prompt, validateChat, {
-      signal: state.ctl.chat.signal,
+      signal: controller.signal,
       tier: "default",
     });
     if (!isCurrentReply("chat", seq, planId)) return;
-    state.plan.chat.push({ role: "assistant", text: reply.reply, at: Date.now() });
+    requirePlan().chat.push({ role: "assistant", text: reply.reply, at: Date.now() });
     if (reply.proposal) proposal = chatProposal(reply.proposal, text);
   } catch (error) {
     if (isCurrentReply("chat", seq, planId)) {
-      state.plan.chat.push({ role: "error", text: errorMessage(error), at: Date.now() });
+      requirePlan().chat.push({ role: "error", text: errorMessage(error), at: Date.now() });
     }
   } finally {
-    if (isLatest("chat", seq)) {
-      state.busy.chat = false;
-      if (state.plan) {
-        savePlan();
-        view.render();
-        if (proposal) showProposal(proposal);
-      }
-    }
+    if (isLatest("chat", seq)) finishChat(proposal);
   }
 }
 
-/** Turns a proposal from a chat reply into a reviewable change, noting the outcome in the chat. */
+/**
+ * Ends a co-planner request: saves the conversation and shows any proposal for approval.
+ * @param {import("../core/proposal.js").Proposal|null} proposal
+ */
+function finishChat(proposal) {
+  state.busy.chat = false;
+  if (!state.plan) return;
+  savePlan();
+  view.render();
+  if (proposal) showProposal(proposal);
+}
+
+/**
+ * Turns a proposal from a chat reply into a reviewable change, noting the outcome in the chat.
+ * @param {import("../core/validation.js").ChatProposal} suggested
+ * @param {string} request the person's message
+ * @returns {import("../core/proposal.js").Proposal|null} null when it wouldn't change anything
+ */
 function chatProposal(suggested, request) {
+  const chat = requirePlan().chat;
   const proposal = proposeChange({
     origin: "ai",
     kind: "chat",
@@ -287,13 +309,13 @@ function chatProposal(suggested, request) {
     request,
   });
   if (proposal.diff.empty && !proposal.blocked) {
-    state.plan.chat.push({
+    chat.push({
       role: "note",
       text: "Claude suggested a change, but it wouldn't alter the plan.",
     });
     return null;
   }
-  state.plan.chat.push({
+  chat.push({
     role: "note",
     text: `Proposal ready: “${proposal.title}”. Review it above the tabs.`,
     at: Date.now(),

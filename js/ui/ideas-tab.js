@@ -9,22 +9,37 @@ import { escapeHtml, formatMoney } from "../core/format.js";
 import { analyze } from "../core/risks.js";
 import { clip, normalizeName, uid } from "../core/util.js";
 import { isClaudeOn } from "../services/claude.js";
-import { state } from "../services/state.js";
+import { requirePlan, state } from "../services/state.js";
 import { originBadge } from "./badges.js";
-import { $, attrIf, onEach, setHtml } from "./dom.js";
+import { $, attrIf, field, onEach, setHtml } from "./dom.js";
 import { toast } from "./toast.js";
 
 /** Ideas added to the timeline are due this many days before the event (or sooner). */
 const IDEA_TASK_LEAD_DAYS = 30;
 
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/model.js").Idea} Idea */
+
+/** @param {Idea} idea */
 const taskTitleFor = (idea) => clip(`Arrange: ${idea.title}`, 160);
+/** @param {Idea} idea */
 const budgetCategoryFor = (idea) => clip(`Idea: ${idea.title}`, 60);
 
+/**
+ * @param {Plan} plan
+ * @param {Idea} idea
+ * @returns {boolean} true once the idea has been added to the timeline
+ */
 function isInTasks(plan, idea) {
-  const key = normalizeName(`Arrange: ${idea.title}`);
+  const key = normalizeName(taskTitleFor(idea));
   return plan.tasks.some((task) => normalizeName(task.title) === key);
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Idea} idea
+ * @returns {boolean} true once the idea has its own budget line
+ */
 function isInBudget(plan, idea) {
   const fullKey = normalizeName(`Idea: ${idea.title}`).slice(0, 60);
   const clippedKey = normalizeName(budgetCategoryFor(idea));
@@ -34,14 +49,26 @@ function isInBudget(plan, idea) {
   });
 }
 
+/**
+ * @param {Idea} idea
+ * @param {string} currency
+ * @returns {string} markup for the cost estimate, or ""
+ */
 function costText(idea, currency) {
-  if (idea.costLow == null && idea.costHigh == null) return "";
-  const low = formatMoney(idea.costLow ?? idea.costHigh, currency);
-  const hasRange = idea.costHigh != null && idea.costLow != null && idea.costHigh !== idea.costLow;
-  const high = hasRange ? `–${formatMoney(idea.costHigh, currency)}` : "";
+  const { costLow, costHigh } = idea;
+  const first = costLow ?? costHigh;
+  if (first == null) return "";
+  const hasRange = costHigh != null && costLow != null && costHigh !== costLow;
+  const high = hasRange ? `–${formatMoney(costHigh, currency)}` : "";
+  const low = formatMoney(first, currency);
   return `<div class="cost">Est. ${low}${high} <span class="note">(estimate)</span></div>`;
 }
 
+/**
+ * @param {Idea} idea
+ * @param {Plan} plan
+ * @returns {string}
+ */
 function ideaCard(idea, plan) {
   const currency = plan.brief.currency;
   const inTasks = isInTasks(plan, idea);
@@ -68,7 +95,7 @@ function ideaCard(idea, plan) {
 
 /** Renders the Ideas tab. */
 export function renderIdeas() {
-  const plan = state.plan;
+  const plan = requirePlan();
   const claudeOn = isClaudeOn();
   const busy = !!state.busy.ideas;
   const panel = $("#panel-ideas");
@@ -86,15 +113,27 @@ export function renderIdeas() {
     <div class="ideas">${plan.ideas.map((idea) => ideaCard(idea, plan)).join("")}</div>`,
   );
   $("#moreIdeas").addEventListener("click", moreIdeas);
-  $("#ideaFocus").addEventListener("input", (event) => {
-    state.ideaFocus = event.target.value;
+  const focus = field("#ideaFocus");
+  focus.addEventListener("input", () => {
+    state.ideaFocus = focus.value;
   });
   onEach("[data-itask]", "click", (button) => addIdeaToTasks(button.dataset.itask), panel);
   onEach("[data-ibud]", "click", (button) => proposeIdeaBudget(button.dataset.ibud), panel);
 }
 
+/**
+ * @param {string|undefined} ideaId
+ * @returns {Idea|undefined}
+ */
+const ideaById = (ideaId) => requirePlan().ideas.find((idea) => idea.id === ideaId);
+
+/**
+ * Adds an idea to the timeline as a task.
+ * @param {string|undefined} ideaId
+ */
 function addIdeaToTasks(ideaId) {
-  const idea = state.plan.ideas.find((x) => x.id === ideaId);
+  const idea = ideaById(ideaId);
+  if (!idea) return;
   commit(`Added idea to tasks: ${idea.title}`, (plan) =>
     plan.tasks.push({
       id: uid(),
@@ -102,7 +141,7 @@ function addIdeaToTasks(ideaId) {
       phase: "Ideas",
       offset: Math.min(
         IDEA_TASK_LEAD_DAYS,
-        Math.max(0, analyze(plan).sc.daysLeft ?? IDEA_TASK_LEAD_DAYS),
+        Math.max(0, analyze(plan).schedule.daysLeft ?? IDEA_TASK_LEAD_DAYS),
       ),
       fixedOffset: true,
       fixedDate: "",
@@ -118,17 +157,20 @@ function addIdeaToTasks(ideaId) {
 /**
  * Proposes a new budget line for an idea, taken from the contingency first (then in proportion
  * from the other categories). The total budget doesn't change.
+ * @param {string|undefined} ideaId
  */
 function proposeIdeaBudget(ideaId) {
-  const plan = state.plan;
+  const plan = requirePlan();
   const currency = plan.brief.currency;
-  const idea = plan.ideas.find((x) => x.id === ideaId);
-  const amount = Math.round(+$(`#ib-${escapeHtml(idea.id)}`).value);
+  const idea = ideaById(ideaId);
+  if (!idea) return;
+  const amount = Math.round(Number(field(`#ib-${CSS.escape(idea.id)}`).value));
   if (!(amount > 0)) {
     toast("Enter an amount greater than 0.", true);
     return;
   }
 
+  /** @type {Array<{category: string, amount: number, locked?: boolean}>} */
   const lines = plan.budget.map((line) => ({ category: line.category, amount: line.amount }));
   lines.push({ category: budgetCategoryFor(idea), amount, locked: true });
   const contingency = lines.find((line) => isContingency(line.category));
@@ -138,7 +180,9 @@ function proposeIdeaBudget(ideaId) {
     contingency.amount -= Math.min(free, amount);
   }
   const spillsOver =
-    contingency && contingencyLine.amount - (contingencyLine.committed || 0) < amount;
+    !!contingency &&
+    !!contingencyLine &&
+    contingencyLine.amount - (contingencyLine.committed || 0) < amount;
 
   showProposal(
     proposeChange({

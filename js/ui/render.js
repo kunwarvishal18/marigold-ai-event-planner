@@ -2,15 +2,15 @@
  * @file Top-level rendering: the plan header, stats, tabs, and the connection chip. Everything is
  * rendered from the app state; only the visible tab panel is rebuilt.
  */
-import { isBooked } from "../core/constants.js";
-import { escapeHtml, formatDate, formatMoney } from "../core/format.js";
+import { isBooked, isOneOf } from "../core/constants.js";
+import { escapeHtml, formatDate, moneyIn } from "../core/format.js";
 import { parseIsoDate } from "../core/dates.js";
 import { analyze } from "../core/risks.js";
 import { state } from "../services/state.js";
 import { sourceBadge } from "./badges.js";
 import { renderBudget } from "./budget-tab.js";
 import { renderChat } from "./chat-tab.js";
-import { $, $$, setHtml } from "./dom.js";
+import { $, $$, $as, setHtml } from "./dom.js";
 import { renderEventDay } from "./eventday-tab.js";
 import { renderExport } from "./export-menu.js";
 import { preserveFocus } from "./focus.js";
@@ -22,10 +22,24 @@ import { renderSaved } from "./saved-plans.js";
 import { renderTimeline } from "./timeline-tab.js";
 import { renderVendors } from "./vendors-tab.js";
 
-/** Plan tabs, in display order. */
-export const TABS = ["overview", "budget", "timeline", "vendors", "ideas", "eventday", "chat"];
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/risks.js").Analysis} Analysis */
 
-/** How each tab panel is rendered. */
+/** Plan tabs, in display order. */
+export const TABS = /** @type {const} */ ([
+  "overview",
+  "budget",
+  "timeline",
+  "vendors",
+  "ideas",
+  "eventday",
+  "chat",
+]);
+
+/**
+ * How each tab panel is rendered.
+ * @type {Record<typeof TABS[number], (analysis: Analysis) => void>}
+ */
 const PANEL_RENDERERS = {
   overview: renderOverview,
   budget: renderBudget,
@@ -55,6 +69,7 @@ export function renderConnection(status) {
   $("#aiText").textContent = CONNECTION_TEXT[status];
 }
 
+/** @param {Plan} plan */
 function renderHeader(plan) {
   const { brief } = plan;
   const edited = plan.log.some((entry) => entry.text.startsWith("Applied"));
@@ -72,16 +87,20 @@ function renderHeader(plan) {
       ? ""
       : "A starter plan built from Marigold's standard template for this event type. Generate with AI to personalise it to your brief.");
 
-  const undoButton = $("#undoBtn");
+  const undoButton = $as(HTMLButtonElement, "#undoBtn");
   undoButton.disabled = !plan.history.length;
   undoButton.textContent = plan.history.length ? `Undo: ${plan.history[0].title}` : "Undo";
   undoButton.title = undoButton.textContent;
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Analysis} analysis
+ */
 function renderStats(plan, analysis) {
   const { brief } = plan;
-  const { daysLeft } = analysis.sc;
-  const money = (amount) => formatMoney(amount, brief.currency);
+  const { daysLeft } = analysis.schedule;
+  const money = moneyIn(brief.currency);
   const stats = [
     [daysLeft == null ? "—" : daysLeft >= 0 ? daysLeft : "Passed", "days to go"],
     [`${analysis.health.score}/100`, "health score"],
@@ -100,6 +119,7 @@ function renderStats(plan, analysis) {
   );
 }
 
+/** @param {Analysis} analysis */
 function renderTabs(analysis) {
   const urgent = analysis.risks.filter((r) => r.sev === "critical" || r.sev === "high").length;
   setHtml(
@@ -108,7 +128,7 @@ function renderTabs(analysis) {
   );
   for (const tab of $$("#tabs [role=tab]")) {
     const selected = tab.dataset.tab === state.tab;
-    tab.setAttribute("aria-selected", selected);
+    tab.setAttribute("aria-selected", String(selected));
     tab.tabIndex = selected ? 0 : -1;
   }
   for (const name of TABS) $(`#panel-${name}`).hidden = name !== state.tab;
@@ -134,7 +154,7 @@ function renderPage() {
   renderTabs(analysis);
   renderProposal();
   // Only the visible panel is rebuilt; the others render when their tab is opened.
-  (PANEL_RENDERERS[state.tab] || PANEL_RENDERERS.overview)(analysis);
+  (isOneOf(state.tab, TABS) ? PANEL_RENDERERS[state.tab] : PANEL_RENDERERS.overview)(analysis);
   renderExport();
 }
 
@@ -147,7 +167,7 @@ export function renderSection(section) {
     if (section === "form") renderForm();
     else if (section === "saved") renderSaved();
     else if (section === "proposal") renderProposal();
-    else if (state.plan && Object.hasOwn(PANEL_RENDERERS, section)) {
+    else if (state.plan) {
       PANEL_RENDERERS[section](analyze(state.plan));
     }
   });
@@ -159,7 +179,7 @@ export function renderSection(section) {
  * @param {{focus?: boolean}} [options] move keyboard focus to the tab
  */
 export function selectTab(name, { focus = false } = {}) {
-  if (!TABS.includes(name)) return;
+  if (!isOneOf(name, TABS)) return;
   state.tab = name;
   renderAll();
   if (focus) $(`#tab-${name}`).focus();

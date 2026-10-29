@@ -5,6 +5,7 @@
 /** Currency used when a plan doesn't name one. */
 const DEFAULT_CURRENCY = "INR";
 
+/** @type {Readonly<Record<string, string>>} */
 const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
 /**
@@ -16,13 +17,16 @@ const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'
 export const escapeHtml = (text) =>
   String(text ?? "").replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
 
+/** @param {string} currency */
 const localeFor = (currency) => (currency === "INR" ? "en-IN" : "en-US");
 
 /**
  * Intl formatters are expensive to create and a render formats hundreds of values, so each one is
  * built once and reused.
  */
+/** @type {Map<string, Intl.NumberFormat>} */
 const moneyFormatters = new Map();
+/** @type {Map<string, Intl.NumberFormat>} */
 const plainFormatters = new Map();
 const LONG_DATE = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
@@ -31,13 +35,19 @@ const LONG_DATE = new Intl.DateTimeFormat(undefined, {
 });
 const SHORT_DATE = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 
-/** @returns {Intl.NumberFormat} throws a RangeError for an unknown currency code */
+/**
+ * @param {string} currency
+ * @returns {Intl.NumberFormat} throws a RangeError for an unknown currency code
+ */
 function moneyFormatter(currency) {
-  if (!moneyFormatters.has(currency)) {
+  let formatter = moneyFormatters.get(currency);
+  if (!formatter) {
+    /** @type {Intl.NumberFormatOptions} */
     const options = { style: "currency", currency, maximumFractionDigits: 0 };
-    moneyFormatters.set(currency, new Intl.NumberFormat(localeFor(currency), options));
+    formatter = new Intl.NumberFormat(localeFor(currency), options);
+    moneyFormatters.set(currency, formatter);
   }
-  return moneyFormatters.get(currency);
+  return formatter;
 }
 
 /**
@@ -61,19 +71,25 @@ export function formatMoney(amount, currency = DEFAULT_CURRENCY) {
 }
 
 /**
+ * A money formatter bound to one currency, for code that formats many amounts of one plan.
+ * @param {string} currency
+ * @returns {(amount: number|null) => string} null is shown as zero
+ */
+export const moneyIn = (currency) => (amount) => formatMoney(amount ?? 0, currency);
+
+/**
  * Money as "CODE 1,234" without symbols, for PDF fonts that can't draw every currency sign.
  * @param {number|string} amount
  * @param {string} currency
  * @returns {string}
  */
 export function formatMoneyPlain(amount, currency) {
-  if (!plainFormatters.has(currency)) {
-    plainFormatters.set(
-      currency,
-      new Intl.NumberFormat(localeFor(currency), { maximumFractionDigits: 0 }),
-    );
+  let formatter = plainFormatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(localeFor(currency), { maximumFractionDigits: 0 });
+    plainFormatters.set(currency, formatter);
   }
-  return `${currency} ${plainFormatters.get(currency).format(Math.round(+amount || 0))}`;
+  return `${currency} ${formatter.format(Math.round(+amount || 0))}`;
 }
 
 /**

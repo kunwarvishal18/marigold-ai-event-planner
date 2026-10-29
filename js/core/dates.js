@@ -70,4 +70,5 @@ export function addDays(date, days) {
  * @param {Date} to
  * @returns {number}
  */
-export const daysBetween = (from, to) => Math.round((startOfDay(to) - startOfDay(from)) / DAY_MS);
+export const daysBetween = (from, to) =>
+  Math.round((startOfDay(to).getTime() - startOfDay(from).getTime()) / DAY_MS);

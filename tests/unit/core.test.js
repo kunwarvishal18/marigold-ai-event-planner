@@ -191,7 +191,7 @@ test("schedule: short runway compresses the timeline", () => {
 /* ---------- Templates, risks, health ---------- */
 test("every template builds a plan whose allocations add up exactly to the budget", () => {
   for (const s of SCENARIOS) {
-    const p = buildPlan(scenarioBrief(s), templateData(s.b.type), "template");
+    const p = buildPlan(scenarioBrief(s), templateData(s.brief.type), "template");
     assert.equal(total(p.budget.map((l) => l.amount)), p.brief.budget);
   }
 });
@@ -201,7 +201,7 @@ test("risks: committed spend over budget is Critical and lowers the Budget part 
   const A = analyze(p);
   assert.ok(A.risks.some((r) => r.sev === "critical" && /exceeds/.test(r.title)));
   assert.ok(A.health.score >= 0 && A.health.score < 100);
-  assert.ok(A.health.comps.find((c) => c.name === "Budget").got < 20);
+  assert.ok(A.health.components.find((c) => c.name === "Budget").score < 20);
 });
 test("risks: guests above venue capacity is Critical; missing date is flagged", () => {
   assert.ok(
@@ -215,9 +215,9 @@ test("risks: guests above venue capacity is Critical; missing date is flagged", 
 });
 test("health score: five areas of 20 points each sum to the score", () => {
   const A = analyze(planFor("Community event", 60));
-  assert.equal(A.health.comps.length, 5);
-  assert.ok(A.health.comps.every((c) => c.max === 20 && c.got >= 0 && c.got <= 20));
-  assert.equal(total(A.health.comps.map((c) => c.got)), A.health.score);
+  assert.equal(A.health.components.length, 5);
+  assert.ok(A.health.components.every((c) => c.max === 20 && c.score >= 0 && c.score <= 20));
+  assert.equal(total(A.health.components.map((c) => c.score)), A.health.score);
 });
 
 /* ---------- Validating Claude's output (untrusted) ---------- */

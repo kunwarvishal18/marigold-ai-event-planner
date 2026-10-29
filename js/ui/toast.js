@@ -6,6 +6,7 @@ import { $ } from "./dom.js";
 
 const INFO_MS = 4000;
 const ERROR_MS = 7000;
+/** @type {ReturnType<typeof setTimeout>|undefined} */
 let hideTimer;
 
 /**

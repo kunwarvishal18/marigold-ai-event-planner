@@ -2,17 +2,21 @@
  * @file Changing the open plan: proposals (preview → approve → apply), direct edits, and undo.
  * Every structural change is undoable and logged.
  */
+import { PLAN_LIMITS } from "../core/constants.js";
 import { sanePlan } from "../core/plan-sanitizer.js";
 import { corePlan, makeProposal } from "../core/proposal.js";
 import { deepClone } from "../core/util.js";
-import { state } from "../services/state.js";
+import { requirePlan, state } from "../services/state.js";
 import { savePlan } from "../services/storage.js";
 import { view } from "../services/view.js";
 
-const MAX_HISTORY = 10;
-const MAX_LOG = 40;
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/model.js").Vendor} Vendor */
 
-/** Vendor fields the person fills in; undo keeps their latest values. */
+/**
+ * Vendor fields the person fills in; undo keeps their latest values.
+ * @type {Array<keyof Vendor>}
+ */
 const VENDOR_FACTS = [
   "status",
   "payment",
@@ -32,7 +36,7 @@ const VENDOR_FACTS = [
  * @param {import("../core/proposal.js").ProposalSpec} spec
  * @returns {import("../core/proposal.js").Proposal}
  */
-export const proposeChange = (spec) => makeProposal(state.plan, spec);
+export const proposeChange = (spec) => makeProposal(requirePlan(), spec);
 
 /**
  * Shows a proposal for approval, unless it wouldn't change anything.
@@ -52,17 +56,22 @@ export function showProposal(proposal) {
 /**
  * Adds an entry to the open plan's change log.
  * @param {string} text
- * @param {"you"|"ai"|"rule"|"template"} [origin]
+ * @param {import("../core/model.js").ItemOrigin} [origin]
  */
 function logEntry(text, origin) {
-  state.plan.log.unshift({ text, origin: origin || "you", at: Date.now() });
-  state.plan.log = state.plan.log.slice(0, MAX_LOG);
+  const plan = requirePlan();
+  plan.log.unshift({ text, origin: origin || "you", at: Date.now() });
+  plan.log = plan.log.slice(0, PLAN_LIMITS.log);
 }
 
-/** Saves an undo snapshot of the open plan. */
+/**
+ * Saves an undo snapshot of the open plan.
+ * @param {string} title
+ */
 function pushHistory(title) {
-  state.plan.history.unshift({ title, at: Date.now(), snap: corePlan(state.plan) });
-  state.plan.history = state.plan.history.slice(0, MAX_HISTORY);
+  const plan = requirePlan();
+  plan.history.unshift({ title, at: Date.now(), snap: corePlan(plan) });
+  plan.history = plan.history.slice(0, PLAN_LIMITS.history);
 }
 
 /** Marks a pending proposal as out of date (the plan changed underneath it). */
@@ -74,20 +83,22 @@ export function markProposalStale() {
 export function applyProposal() {
   const proposal = state.proposal;
   if (!proposal || proposal.blocked || state.busy.apply) return;
-  if (proposal.planId !== state.plan.id || proposal.baseRev !== state.plan.rev) {
+  const current = requirePlan();
+  if (proposal.planId !== current.id || proposal.baseRev !== current.rev) {
     proposal.status = "stale";
     view.renderSection("proposal");
     return;
   }
   state.busy.apply = true;
   pushHistory(proposal.title);
-  const { history, chat, log } = state.plan;
-  state.plan = { ...proposal.after, history, chat, log };
+  const { history, chat, log } = current;
+  const applied = { ...proposal.after, history, chat, log };
+  state.plan = applied;
   logEntry(`Applied: ${proposal.title}`, proposal.origin);
-  state.plan.chat.push({ role: "note", text: `Applied “${proposal.title}”.`, at: Date.now() });
+  applied.chat.push({ role: "note", text: `Applied “${proposal.title}”.`, at: Date.now() });
   state.proposal = null;
   state.busy.apply = false;
-  view.fillForm(state.plan.brief);
+  view.fillForm(applied.brief);
   savePlan();
   view.render();
   view.toast("Changes applied. Use Undo to reverse them.");
@@ -116,9 +127,9 @@ export function rejectProposal() {
  * (ticked tasks, recorded spend, vendor details), matched by id.
  */
 export function undo() {
-  const entry = state.plan.history[0];
+  const current = requirePlan();
+  const entry = current.history[0];
   if (!entry) return;
-  const current = state.plan;
   // Snapshots come back from storage, so they are validated like any stored plan.
   const snapshot = sanePlan({ ...deepClone(entry.snap), id: current.id });
   if (!snapshot) {
@@ -142,24 +153,35 @@ export function undo() {
   }
 
   keepEnteredFacts(snapshot, current);
-  state.plan = {
+  const restored = {
     ...snapshot,
     rev: current.rev + 1,
     history: current.history.slice(1),
     chat: current.chat,
     log: current.log,
   };
+  state.plan = restored;
   logEntry(`Undid: ${entry.title}`);
-  state.plan.chat.push({ role: "note", text: `Undid “${entry.title}”.`, at: Date.now() });
+  restored.chat.push({ role: "note", text: `Undid “${entry.title}”.`, at: Date.now() });
   markProposalStale();
-  view.fillForm(state.plan.brief);
+  view.fillForm(restored.brief);
   savePlan();
   view.render();
   view.toast(`Undid “${entry.title}”.`);
 }
 
-/** Copies what the person recorded since the snapshot onto it. */
+/**
+ * Copies what the person recorded since the snapshot onto it.
+ * @param {Plan} snapshot mutated
+ * @param {Plan} current
+ */
 function keepEnteredFacts(snapshot, current) {
+  /**
+   * @template {{id: string}} T
+   * @param {T[]} list
+   * @param {string} id
+   * @returns {T|undefined}
+   */
   const byId = (list, id) => list.find((item) => item.id === id);
   for (const task of snapshot.tasks) {
     const now = byId(current.tasks, task.id);
@@ -172,7 +194,7 @@ function keepEnteredFacts(snapshot, current) {
   for (const vendor of snapshot.vendors) {
     const now = byId(current.vendors, vendor.id);
     if (!now) continue;
-    for (const key of VENDOR_FACTS) vendor[key] = now[key];
+    for (const key of VENDOR_FACTS) Object.assign(vendor, { [key]: now[key] });
     for (const item of vendor.checklist) {
       const nowItem = byId(now.checklist, item.id);
       if (nowItem) item.done = nowItem.done;
@@ -190,12 +212,21 @@ function keepEnteredFacts(snapshot, current) {
  * @param {{structural?: boolean}} [options]
  */
 export function commit(title, change, { structural = true } = {}) {
+  const plan = requirePlan();
   if (structural) pushHistory(title);
-  change(state.plan);
+  change(plan);
   if (structural) {
-    state.plan.rev++;
+    plan.rev++;
     logEntry(title);
   }
   savePlan();
   view.render();
 }
+
+/**
+ * A change that is saved but not undoable or logged: ticking a box, typing a vendor's phone
+ * number, recording spend.
+ * @param {string} title
+ * @param {(plan: Plan) => void} change mutates the plan
+ */
+export const commitQuietly = (title, change) => commit(title, change, { structural: false });

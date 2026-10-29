@@ -6,14 +6,19 @@ import { escapeHtml } from "../core/format.js";
 import { state } from "../services/state.js";
 import { sanePlan } from "../core/plan-sanitizer.js";
 import { getPlan, storageState, storedPlanSummary } from "../services/storage.js";
-import { $, attrIf, setHtml } from "./dom.js";
+import { $, attrIf, closestTo, setHtml } from "./dom.js";
 
 /** How long a "Confirm delete" button stays armed. */
 const CONFIRM_MS = 4000;
 
+/** @type {Readonly<Record<string, string>>} */
 const SOURCE_LABELS = { ai: "AI", example: "Example" };
 
-/** Explains any stored data that is kept but not shown, or why saving is paused. */
+/**
+ * Explains any stored data that is kept but not shown, or why saving is paused.
+ * @param {{newer: number, invalid: number}} hidden counts of stored entries not listed
+ * @returns {string} markup
+ */
 function storageNotes(hidden) {
   const notes = [];
   if (storageState.corrupt) {
@@ -42,14 +47,18 @@ function storageNotes(hidden) {
   return notes.map((note) => `<p class="field-err" role="alert">${escapeHtml(note)}</p>`).join("");
 }
 
+/**
+ * @param {import("../core/model.js").Plan} plan
+ * @returns {string} markup
+ */
 function savedItem(plan) {
   const id = plan.id;
   const name = escapeHtml(plan.brief.name);
-  const isOpen = state.plan && state.plan.id === plan.id;
+  const isOpen = state.plan?.id === plan.id;
   return `<div class="saved-item">
     <button type="button" class="linkbtn" data-open="${escapeHtml(id)}" ${attrIf(isOpen, 'aria-current="true"')}>${name}</button>
     <span class="btnrow">
-      <small>${SOURCE_LABELS[plan.source] || "Template"}</small>
+      <small>${Object.hasOwn(SOURCE_LABELS, plan.source) ? SOURCE_LABELS[plan.source] : "Template"}</small>
       <button type="button" class="iconbtn" data-del="${escapeHtml(id)}" aria-label="Delete ${name}">Delete</button>
     </span>
   </div>`;
@@ -67,19 +76,23 @@ export function renderSaved() {
 /** Wires opening and deleting (delete needs a second click within a few seconds). */
 export function bindSavedPlans() {
   $("#savedList").addEventListener("click", (event) => {
-    const openButton = event.target.closest("[data-open]");
+    const openButton = closestTo(event, "[data-open]");
     if (openButton) {
       const plan = sanePlan(getPlan(openButton.dataset.open));
       if (plan) openPlan(plan);
     }
-    const deleteButton = event.target.closest("[data-del]");
+    const deleteButton = closestTo(event, "[data-del]");
     if (deleteButton) confirmOrDelete(deleteButton);
   });
 }
 
+/**
+ * The first click arms a delete button; a second click within CONFIRM_MS deletes the plan.
+ * @param {HTMLElement} button
+ */
 function confirmOrDelete(button) {
   if (button.dataset.armed) {
-    deletePlan(button.dataset.del);
+    deletePlan(button.dataset.del || "");
     return;
   }
   button.dataset.armed = "1";

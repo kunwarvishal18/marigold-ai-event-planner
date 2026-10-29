@@ -3,6 +3,7 @@
  * Static markup only; nothing dynamic is interpolated.
  */
 
+/** @type {Readonly<Record<string, string>>} */
 const SOURCE_BADGES = {
   ai: '<span class="badge ai">AI generated</span>',
   template: '<span class="badge tpl">Template plan</span>',
@@ -10,6 +11,7 @@ const SOURCE_BADGES = {
   legacy: '<span class="badge tpl">Imported from earlier version</span>',
 };
 
+/** @type {Readonly<Record<string, string>>} */
 const ORIGIN_BADGES = {
   ai: '<span class="badge ai">AI</span>',
   you: '<span class="badge">Added by you</span>',

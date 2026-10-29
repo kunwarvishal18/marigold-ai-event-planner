@@ -50,12 +50,14 @@ export async function askClaudeForJSON(
   validate,
   { tier = "default", signal, retries = 1 } = {},
 ) {
-  if (!state.sample) throw new AIError("unavailable", "Claude isn't connected.");
+  const sample = state.sample;
+  if (!sample) throw new AIError("unavailable", "Claude isn't connected.");
   let input = prompt;
+  /** @type {string[]} */
   let errors = [];
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const text = await sampleText(input, tier, signal);
+    const text = await sampleText(sample, input, tier, signal);
     const tooLong = typeof text === "string" && text.length > MAX_REPLY_CHARS;
     const parsed = tooLong ? undefined : extractJSON(text);
 
@@ -74,16 +76,47 @@ export async function askClaudeForJSON(
   throw new AIError("invalid_output", "Claude's answer failed validation twice.", errors);
 }
 
-async function sampleText(input, tier, signal) {
+/**
+ * One request to the host's sampling capability. Its errors become AIErrors.
+ * @param {ClaudeSampleCapability} sample
+ * @param {string} input
+ * @param {string} tier
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<string|undefined>}
+ */
+async function sampleText(sample, input, tier, signal) {
   try {
-    const { text } = await state.sample(input, { modelTier: tier, signal, cache: false });
+    const { text } = await sample(input, { modelTier: tier, signal, cache: false });
     return text;
   } catch (error) {
-    if (error?.code === "not_granted") setConnection("declined");
-    throw new AIError(error?.code || "upstream_error", error?.message || "Claude request failed");
+    const code = errorField(error, "code");
+    if (code === "not_granted") setConnection("declined");
+    throw new AIError(
+      code || "upstream_error",
+      errorField(error, "message") || "Claude request failed",
+    );
   }
 }
 
+/**
+ * A string property of whatever the host threw, or "".
+ * @param {unknown} error
+ * @param {"code"|"message"} key
+ * @returns {string}
+ */
+const errorField = (error, key) => {
+  const value = error && typeof error === "object" ? Reflect.get(error, key) : "";
+  return typeof value === "string" ? value : "";
+};
+
+/**
+ * The machine-readable code of a failed request ("" when there is none).
+ * @param {unknown} error
+ * @returns {string}
+ */
+export const errorCode = (error) => errorField(error, "code");
+
+/** @type {Readonly<Record<string, string>>} */
 const ERROR_MESSAGES = {
   rate_limited: "Claude is rate-limited for you right now. Wait about a minute, then try again.",
   queue_overflow: "Too many Claude requests are waiting. Wait a moment, then try again.",
@@ -101,13 +134,14 @@ const ERROR_MESSAGES = {
 
 /**
  * A plain-language message for a failed Claude request.
- * @param {AIError|Error|null} error
+ * @param {unknown} error usually an AIError; anything else with a string `code` works too
  * @returns {string}
  */
 export function errorMessage(error) {
-  const code = error?.code;
+  const code = errorCode(error);
   if (code === "invalid_output") {
-    const reasons = error.details?.length ? ` (${error.details.slice(0, 2).join("; ")})` : "";
+    const details = error instanceof AIError ? error.details : undefined;
+    const reasons = details?.length ? ` (${details.slice(0, 2).join("; ")})` : "";
     return (
       `Claude's answer didn't pass Marigold's checks after a retry${reasons}. ` +
       "Nothing was changed. Try again."

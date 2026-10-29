@@ -1,16 +1,19 @@
 /**
- * @file Rule-based risks and the event health score. Deterministic: no AI, no randomness.
+ * @file Rule-based risks. Deterministic: no AI, no randomness.
  *
- * analyze() runs four independent checks (budget, timeline, vendors, event), then scores five
- * health components of 20 points each. Every lost point comes with a reason and an action.
+ * analyze() runs four independent checks (budget, timeline, vendors, event) and then scores the
+ * plan's health from what they found (see health.js).
  */
-import { SEVERITY_RANK, isBooked, isContingency } from "./constants.js";
-import { daysBetween } from "./dates.js";
-import { formatDate, formatMoney } from "./format.js";
-import { schedule } from "./scheduler.js";
+import { SEVERITY_RANK, isContingency } from "./constants.js";
+import { formatDate, moneyIn } from "./format.js";
+import { scoreHealth } from "./health.js";
+import { daysToBook, schedule } from "./scheduler.js";
 import { isNumeric, sum } from "./util.js";
 
-/** Vendors each event type can't happen without: [label, category pattern]. */
+/**
+ * Vendors each event type can't happen without: [label, category pattern].
+ * @type {Readonly<Record<string, Array<[string, RegExp]>>>}
+ */
 const REQUIRED_VENDORS = {
   Wedding: [
     ["venue", /venue|hall|banquet|palace|lawn|resort|haveli|garden/],
@@ -25,38 +28,60 @@ const REQUIRED_VENDORS = {
   ],
 };
 
-/** Minimum sensible planning runway, in days, per event type. */
+/**
+ * Minimum sensible planning runway, in days, per event type.
+ * @type {Readonly<Record<string, number>>}
+ */
 const MIN_RUNWAY_DAYS = { Wedding: 30, Birthday: 7, "Community event": 21 };
 const DEFAULT_MIN_RUNWAY_DAYS = 14;
-
-/** Health points lost per "event" risk, by severity. */
-const EVENT_RISK_POINTS = { critical: 10, high: 6, medium: 3, low: 1 };
 
 const OUTDOOR_PATTERN =
   /outdoor|garden|lawn|open[- ]air|beach|terrace|rooftop|park|festival|poolside|courtyard/;
 const CROWD_PLAN_PATTERN = /security|crowd|volunteer|transport|parking|shuttle|steward/;
 
+/** @typedef {import("./constants.js").Severity} Severity */
+/** @typedef {import("./model.js").CorePlan} Plan the plan content (history, chat and log unused) */
+/** @typedef {import("./model.js").Task} Task */
+/** @typedef {import("./model.js").Vendor} Vendor */
+/** @typedef {import("./model.js").BudgetLine} BudgetLine */
+/** @typedef {import("./scheduler.js").Schedule} Schedule */
+/** @typedef {(amount: number|null) => string} Money formats an amount in the plan's currency */
+
 /**
  * @typedef {object} Risk
- * @property {"critical"|"high"|"medium"|"low"} sev
+ * @property {Severity} sev
  * @property {"budget"|"timeline"|"vendors"|"event"} area
  * @property {string} title
  * @property {string} why
  * @property {string} action
  * @property {string} tab the plan tab where it can be fixed
- * @property {"rule"|"ai"} source
+ * @property {"rule"} source
  */
 
 /**
  * @typedef {object} Analysis
- * @property {import("./scheduler.js").Schedule} sc
+ * @property {Schedule} schedule
  * @property {Risk[]} risks most severe first
- * @property {{score: number, comps: object[]}} health
- * @property {number} alloc sum of allocations
+ * @property {{score: number, components: import("./health.js").HealthComponent[]}} health
+ * @property {number} allocated sum of allocations
  * @property {number} committed sum of committed spend
- * @property {object[]} overdue overdue tasks
- * @property {number} contPct unspent contingency as a percent of the budget
+ * @property {Task[]} overdue overdue tasks
+ * @property {number} contingencyPct unspent contingency as a percent of the budget
  */
+
+/**
+ * @typedef {object} BudgetFindings
+ * @property {number} allocated
+ * @property {number} committed
+ * @property {number} total
+ * @property {BudgetLine[]} overLines lines with more committed than allocated
+ * @property {boolean} hasContingency
+ * @property {number} contingencyPct
+ * @property {Vendor[]} quoteOver vendors quoted above their budget line
+ */
+
+/** @typedef {{overdue: Task[], minDays: number}} TimelineFindings */
+/** @typedef {{late: Vendor[], soon: Vendor[], missing: Array<[string, RegExp]>}} VendorFindings */
 
 /**
  * Collects risks in a fixed order. Each check appends to the same list.
@@ -67,6 +92,14 @@ class RiskList {
     this.items = [];
   }
 
+  /**
+   * @param {Severity} sev
+   * @param {Risk["area"]} area
+   * @param {string} title
+   * @param {string} why
+   * @param {string} action
+   * @param {string} tab
+   */
   add(sev, area, title, why, action, tab) {
     this.items.push({ sev, area, title, why, action, tab, source: "rule" });
   }
@@ -74,13 +107,13 @@ class RiskList {
 
 /**
  * Analyzes a plan: schedule, rule-based risks and the health score.
- * @param {import("./model.js").Plan} plan
+ * @param {Plan} plan
  * @returns {Analysis}
  */
 export function analyze(plan) {
   const sched = schedule(plan);
   const risks = new RiskList();
-  const money = (amount) => formatMoney(amount, plan.brief.currency);
+  const money = moneyIn(plan.brief.currency);
 
   const budget = checkBudget(plan, risks, money);
   const timeline = checkTimeline(plan, sched, risks);
@@ -90,27 +123,33 @@ export function analyze(plan) {
 
   const health = scoreHealth({ plan, sched, risks: risks.items, budget, timeline, vendors });
   return {
-    sc: sched,
+    schedule: sched,
     risks: risks.items,
     health,
-    alloc: budget.alloc,
+    allocated: budget.allocated,
     committed: budget.committed,
     overdue: timeline.overdue,
-    contPct: budget.contPct,
+    contingencyPct: budget.contingencyPct,
   };
 }
 
+/**
+ * @param {Plan} plan
+ * @param {RiskList} risks
+ * @param {Money} money
+ * @returns {BudgetFindings}
+ */
 function checkBudget(plan, risks, money) {
   const total = plan.brief.budget;
-  const alloc = sum(plan.budget.map((line) => line.amount));
+  const allocated = sum(plan.budget.map((line) => line.amount));
   const committed = sum(plan.budget.map((line) => line.committed || 0));
 
-  if (alloc !== total) {
+  if (allocated !== total) {
     risks.add(
       "high",
       "budget",
       "Budget not fully allocated",
-      `Categories add up to ${money(alloc)} but the budget is ${money(total)}.`,
+      `Categories add up to ${money(allocated)} but the budget is ${money(total)}.`,
       "Use the optimizer or ask the co-planner to rebalance.",
       "budget",
     );
@@ -138,9 +177,27 @@ function checkBudget(plan, risks, money) {
     );
   }
 
+  return {
+    allocated,
+    committed,
+    total,
+    overLines,
+    ...checkContingency(plan, risks),
+    quoteOver: checkQuotes(plan, risks, money),
+  };
+}
+
+/**
+ * Whether there is a contingency reserve, and how much of it is unspent.
+ * @param {Plan} plan
+ * @param {RiskList} risks
+ * @returns {{hasContingency: boolean, contingencyPct: number}}
+ */
+function checkContingency(plan, risks) {
+  const total = plan.brief.budget;
   const contingency = plan.budget.filter((line) => isContingency(line.category));
   const contFree = sum(contingency.map((line) => Math.max(0, line.amount - (line.committed || 0))));
-  const contPct = total ? (contFree / total) * 100 : 0;
+  const contingencyPct = total ? (contFree / total) * 100 : 0;
   if (!contingency.length) {
     risks.add(
       "medium",
@@ -150,39 +207,33 @@ function checkBudget(plan, risks, money) {
       "Add a 5–10% contingency through the optimizer or the co-planner.",
       "budget",
     );
-  } else if (contPct < 5) {
+  } else if (contingencyPct < 5) {
     risks.add(
-      contPct < 2 ? "high" : "medium",
+      contingencyPct < 2 ? "high" : "medium",
       "budget",
       "Contingency reserve is thin",
-      `Unspent contingency is ${contPct.toFixed(1)}% of the budget. Many planners keep 5–10%.`,
+      `Unspent contingency is ${contingencyPct.toFixed(1)}% of the budget. Many planners keep 5–10%.`,
       "Move money into contingency before committing more.",
       "budget",
     );
   }
-
-  const quoteOver = checkQuotes(plan, risks, money);
-  return {
-    alloc,
-    committed,
-    total,
-    overLines,
-    hasContingency: contingency.length > 0,
-    contPct,
-    quoteOver,
-  };
+  return { hasContingency: contingency.length > 0, contingencyPct };
 }
 
-/** Vendors whose quote is above the budget line they're linked to. */
+/**
+ * Vendors whose quote is above the budget line they're linked to.
+ * @param {Plan} plan
+ * @param {RiskList} risks
+ * @param {Money} money
+ * @returns {Vendor[]}
+ */
 function checkQuotes(plan, risks, money) {
-  const lineFor = (vendor) => plan.budget.find((line) => line.id === vendor.lineId);
-  const quoteOver = plan.vendors.filter((vendor) => {
-    if (!isNumeric(vendor.quote) || !vendor.lineId) return false;
-    const line = lineFor(vendor);
-    return line && +vendor.quote > line.amount;
-  });
-  for (const vendor of quoteOver) {
-    const line = lineFor(vendor);
+  /** @type {Vendor[]} */
+  const quoteOver = [];
+  for (const vendor of plan.vendors) {
+    const line = plan.budget.find((budgetLine) => budgetLine.id === vendor.lineId);
+    if (!line || !isNumeric(vendor.quote) || Number(vendor.quote) <= line.amount) continue;
+    quoteOver.push(vendor);
     risks.add(
       "medium",
       "budget",
@@ -195,12 +246,19 @@ function checkQuotes(plan, risks, money) {
   return quoteOver;
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {RiskList} risks
+ * @returns {TimelineFindings}
+ */
 function checkTimeline(plan, sched, risks) {
   const { brief } = plan;
   const minDays = MIN_RUNWAY_DAYS[brief.type] || DEFAULT_MIN_RUNWAY_DAYS;
-  let overdue = [];
+  /** @type {Task[]} */
+  const overdue = [];
 
-  if (!sched.ev) {
+  if (!sched.eventDate || sched.daysLeft == null) {
     risks.add(
       "medium",
       "timeline",
@@ -216,7 +274,7 @@ function checkTimeline(plan, sched, risks) {
       "high",
       "timeline",
       "Event date has passed",
-      `${formatDate(sched.ev)} was ${-sched.daysLeft} days ago.`,
+      `${formatDate(sched.eventDate)} was ${-sched.daysLeft} days ago.`,
       "If the event moved, update the date in Event details.",
       "timeline",
     );
@@ -235,21 +293,7 @@ function checkTimeline(plan, sched, risks) {
     );
   }
 
-  overdue = plan.tasks.filter(
-    (task) => !task.done && sched.due[task.id] && sched.due[task.id] < sched.today,
-  );
-  if (overdue.length) {
-    const highCount = overdue.filter((task) => task.priority === "high").length;
-    const oldest = overdue.slice().sort((a, b) => sched.due[a.id] - sched.due[b.id])[0];
-    risks.add(
-      highCount ? "high" : "medium",
-      "timeline",
-      `${overdue.length} overdue task${overdue.length > 1 ? "s" : ""}`,
-      `${highCount} high priority. Oldest: “${oldest.title}”, due ${formatDate(sched.due[oldest.id])}.`,
-      "Finish them or ask the co-planner to reschedule.",
-      "timeline",
-    );
-  }
+  const overdueTasks = checkOverdue(plan, sched, risks);
   if (sched.compressed) {
     risks.add(
       "low",
@@ -260,19 +304,59 @@ function checkTimeline(plan, sched, risks) {
       "timeline",
     );
   }
-  return { overdue, minDays };
+  return { overdue: overdueTasks, minDays };
 }
 
-function checkVendors(plan, sched, risks) {
-  const late = [];
-  const soon = [];
-  const eventAhead = sched.ev && sched.daysLeft >= 0;
+/**
+ * Unfinished tasks whose due date has passed.
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {RiskList} risks
+ * @returns {Task[]}
+ */
+function checkOverdue(plan, sched, risks) {
+  const dueTime = (/** @type {Task} */ task) => sched.due[task.id]?.getTime() ?? Infinity;
+  const overdue = plan.tasks.filter((task) => !task.done && dueTime(task) < sched.today.getTime());
+  if (!overdue.length) return overdue;
+  const highCount = overdue.filter((task) => task.priority === "high").length;
+  const oldest = overdue.slice().sort((a, b) => dueTime(a) - dueTime(b))[0];
+  risks.add(
+    highCount ? "high" : "medium",
+    "timeline",
+    `${overdue.length} overdue task${overdue.length > 1 ? "s" : ""}`,
+    `${highCount} high priority. Oldest: “${oldest.title}”, due ${formatDate(sched.due[oldest.id])}.`,
+    "Finish them or ask the co-planner to reschedule.",
+    "timeline",
+  );
+  return overdue;
+}
 
-  for (const vendor of eventAhead ? plan.vendors : []) {
-    if (!vendor.critical || isBooked(vendor)) continue;
+/**
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {RiskList} risks
+ * @returns {VendorFindings}
+ */
+function checkVendors(plan, sched, risks) {
+  return { ...checkBookings(plan, sched, risks), missing: checkRequiredVendors(plan, risks) };
+}
+
+/**
+ * Critical vendors past, or within two weeks of, their book-by date.
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {RiskList} risks
+ * @returns {{late: Vendor[], soon: Vendor[]}}
+ */
+function checkBookings(plan, sched, risks) {
+  /** @type {Vendor[]} */
+  const late = [];
+  /** @type {Vendor[]} */
+  const soon = [];
+  for (const vendor of plan.vendors) {
+    const daysLeft = daysToBook(vendor, sched);
     const bookBy = sched.vendorDue[vendor.id];
-    if (!bookBy) continue;
-    const daysLeft = daysBetween(sched.today, bookBy);
+    if (daysLeft == null || !bookBy) continue;
     if (daysLeft < 0) {
       late.push(vendor);
       risks.add(
@@ -295,7 +379,16 @@ function checkVendors(plan, sched, risks) {
       );
     }
   }
+  return { late, soon };
+}
 
+/**
+ * Vendor types this kind of event can't happen without, that the plan doesn't list.
+ * @param {Plan} plan
+ * @param {RiskList} risks
+ * @returns {Array<[string, RegExp]>}
+ */
+function checkRequiredVendors(plan, risks) {
   const { type } = plan.brief;
   const missing = (REQUIRED_VENDORS[type] || []).filter(
     ([, pattern]) => !plan.vendors.some((vendor) => pattern.test(vendor.category.toLowerCase())),
@@ -310,12 +403,27 @@ function checkVendors(plan, sched, risks) {
       "vendors",
     );
   }
-  return { late, soon, missing };
+  return missing;
 }
 
+/**
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {RiskList} risks
+ */
 function checkEvent(plan, sched, risks) {
-  const { brief } = plan;
-  const capacity = +brief.venueCapacity || 0;
+  checkCapacity(plan.brief, risks);
+  checkWeather(plan, sched, risks);
+  checkCrowd(plan, risks);
+}
+
+/**
+ * Guests against venue capacity.
+ * @param {import("./model.js").Brief} brief
+ * @param {RiskList} risks
+ */
+function checkCapacity(brief, risks) {
+  const capacity = Number(brief.venueCapacity) || 0;
 
   if (capacity && brief.guests > capacity) {
     risks.add(
@@ -345,7 +453,16 @@ function checkEvent(plan, sched, risks) {
       "overview",
     );
   }
+}
 
+/**
+ * Outdoor events need a weather backup.
+ * @param {Plan} plan
+ * @param {Schedule} sched
+ * @param {RiskList} risks
+ */
+function checkWeather(plan, sched, risks) {
+  const { brief } = plan;
   const themeText = `${brief.style} ${brief.notes} ${brief.name}`.toLowerCase();
   const outdoor = OUTDOOR_PATTERN.test(themeText) || brief.type === "Community event";
   if (outdoor && !plan.dayOf.weather.some((item) => item.done)) {
@@ -359,7 +476,15 @@ function checkEvent(plan, sched, risks) {
       "eventday",
     );
   }
+}
 
+/**
+ * Large events need crowd and transport planning.
+ * @param {Plan} plan
+ * @param {RiskList} risks
+ */
+function checkCrowd(plan, risks) {
+  const { brief } = plan;
   const planText = [...plan.tasks.map((t) => t.title), ...plan.vendors.map((v) => v.category)]
     .join(" ")
     .toLowerCase();
@@ -373,107 +498,4 @@ function checkEvent(plan, sched, risks) {
       "timeline",
     );
   }
-}
-
-/** Each deduction is [points, reason, action]. */
-function budgetDeductions(budget) {
-  const ded = [];
-  if (budget.alloc !== budget.total) {
-    ded.push([4, "Budget not fully allocated", "Rebalance categories"]);
-  }
-  if (budget.committed > budget.total) {
-    ded.push([10, "Committed spend is over budget", "Cut or renegotiate commitments"]);
-  }
-  for (const line of budget.overLines.slice(0, 2)) {
-    ded.push([3, `${line.category} over plan`, "Rebalance or renegotiate"]);
-  }
-  if (!budget.hasContingency || budget.contPct < 5) {
-    ded.push([4, "Contingency under 5%", "Top up contingency"]);
-  }
-  for (const vendor of budget.quoteOver.slice(0, 2)) {
-    ded.push([2, `${vendor.category} quote above allocation`, "Negotiate or rebalance"]);
-  }
-  return ded;
-}
-
-function timelineDeductions(sched, timeline) {
-  if (!sched.ev) return [[10, "No event date", "Add the date"]];
-  if (sched.daysLeft < 0) return [[20, "Event date has passed", "Update the date"]];
-  const ded = [];
-  if (sched.daysLeft < timeline.minDays) {
-    ded.push([6, "Very short runway", "Prioritise critical tasks"]);
-  }
-  for (const task of timeline.overdue.slice(0, 8)) {
-    ded.push([
-      task.priority === "high" ? 3 : 2,
-      `Overdue: ${task.title}`,
-      "Complete or reschedule",
-    ]);
-  }
-  return ded;
-}
-
-function vendorDeductions(vendors) {
-  return [
-    ...vendors.late.map((v) => [6, `${v.category} past its book-by date`, "Book it now"]),
-    ...vendors.soon.map((v) => [
-      2,
-      `${v.category} due to be booked soon`,
-      "Request quotes this week",
-    ]),
-    ...vendors.missing.map(([label]) => [5, `No ${label}`, "Add this vendor"]),
-  ];
-}
-
-/** Share of the tasks due before today that are done. */
-function progressDeductions(dueTasks) {
-  if (!dueTasks.length) return [];
-  const doneDue = dueTasks.filter((task) => task.done).length;
-  const lost = Math.round(20 - (20 * doneDue) / dueTasks.length);
-  if (!lost) return [];
-  return [
-    [
-      lost,
-      `${doneDue} of ${dueTasks.length} tasks due before today are done`,
-      "Tick off finished tasks in Timeline",
-    ],
-  ];
-}
-
-/**
- * Five components, 20 points each. Deductions are listed in priority order and stop at zero.
- */
-function scoreHealth({ plan, sched, risks, budget, timeline, vendors }) {
-  const dueTasks = sched.ev
-    ? plan.tasks.filter((task) => sched.due[task.id] && sched.due[task.id] < sched.today)
-    : [];
-  const eventRisks = risks
-    .filter((risk) => risk.area === "event")
-    .map((risk) => [EVENT_RISK_POINTS[risk.sev], risk.title, risk.action]);
-
-  const comps = [
-    ["Budget", budgetDeductions(budget)],
-    ["Timeline", timelineDeductions(sched, timeline)],
-    ["Vendors", vendorDeductions(vendors)],
-    ["Task progress", progressDeductions(dueTasks)],
-    ["Event risks", eventRisks],
-  ].map(([name, ded]) => applyDeductions({ name, max: 20, ded }));
-
-  if (!dueTasks.length) {
-    comps[3].note = sched.ev ? "No tasks are due yet." : "Add a date to measure progress.";
-  }
-  return { score: sum(comps.map((c) => c.got)), comps };
-}
-
-/** Takes deductions in order until the component reaches zero. */
-function applyDeductions(component) {
-  let left = component.max;
-  const ded = [];
-  for (const [pts, reason, action] of component.ded) {
-    const take = Math.min(pts, left);
-    if (take <= 0) break;
-    left -= take;
-    ded.push({ pts: take, reason, action });
-  }
-  return { ...component, ded, got: left };
 }

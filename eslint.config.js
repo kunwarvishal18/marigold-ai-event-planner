@@ -21,7 +21,7 @@ const qualityRules = {
   "no-implied-eval": "error",
   "no-new-func": "error",
   "no-script-url": "error",
-  "no-unused-vars": ["error", { args: "none" }],
+  "no-unused-vars": ["error", { args: "none", ignoreRestSiblings: true }],
   "no-empty": ["error", { allowEmptyCatch: false }],
   "no-var": "error",
   "prefer-const": "error",
@@ -35,11 +35,11 @@ const qualityRules = {
   "object-shorthand": ["error", "always"],
   "prefer-template": "error",
   curly: ["error", "multi-line"],
-  complexity: ["error", 20],
-  "max-depth": ["error", 4],
+  complexity: ["error", 12],
+  "max-depth": ["error", 3],
   "max-params": ["error", 6],
   "max-lines": ["error", { max: 400, skipBlankLines: true, skipComments: true }],
-  "max-lines-per-function": ["error", { max: 80, skipBlankLines: true, skipComments: true }],
+  "max-lines-per-function": ["error", { max: 60, skipBlankLines: true, skipComments: true }],
 };
 
 export default [

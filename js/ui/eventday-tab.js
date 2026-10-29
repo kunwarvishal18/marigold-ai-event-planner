@@ -2,12 +2,32 @@
  * @file Event day tab: countdown, pending critical tasks, the run of show, vendor arrivals, key
  * contacts, and the emergency and weather checklists.
  */
-import { commit } from "../actions/history.js";
+import { commitQuietly } from "../actions/history.js";
 import { DAY_MS, daysBetween, parseIsoDate, today } from "../core/dates.js";
 import { escapeHtml, formatDate, formatShortDate } from "../core/format.js";
+import { isOneOf } from "../core/constants.js";
 import { clip, uid } from "../core/util.js";
-import { state } from "../services/state.js";
-import { $, attrIf, onEach, onSubmit, setHtml } from "./dom.js";
+import { requirePlan, state } from "../services/state.js";
+import {
+  $,
+  $$,
+  asField,
+  attrIf,
+  field,
+  find,
+  isChecked,
+  onEach,
+  onSubmit,
+  setHtml,
+} from "./dom.js";
+
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {"emergency"|"weather"} ChecklistKey */
+
+/** @type {readonly ChecklistKey[]} */
+const CHECKLIST_KEYS = ["emergency", "weather"];
+/** @type {ReadonlyArray<"time"|"item"|"owner">} */
+const RUN_OF_SHOW_FIELDS = ["time", "item", "owner"];
 
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
@@ -26,7 +46,7 @@ function countdownText() {
   const startsAt = new Date(eventDate);
   startsAt.setHours(hours || 0, minutes || 0, 0, 0);
 
-  const msLeft = startsAt - Date.now();
+  const msLeft = startsAt.getTime() - Date.now();
   if (msLeft < 0) return daysBetween(eventDate, today()) === 0 ? "Today" : "Event passed";
   const days = Math.floor(msLeft / DAY_MS);
   const hoursLeft = Math.floor((msLeft % DAY_MS) / HOUR_MS);
@@ -37,10 +57,16 @@ function countdownText() {
 
 /** Updates the countdown in place, if the Event day tab is open. */
 export function refreshCountdown() {
-  const element = $("#countdown");
+  const element = find("#countdown");
   if (element) element.textContent = countdownText();
 }
 
+/**
+ * @param {Plan} plan
+ * @param {ChecklistKey} key
+ * @param {string} title
+ * @returns {string}
+ */
 function checklistCard(plan, key, title) {
   const items = plan.dayOf[key]
     .map(
@@ -54,16 +80,21 @@ function checklistCard(plan, key, title) {
   </div>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @param {import("../core/scheduler.js").Schedule} sched
+ * @returns {string}
+ */
 function summaryCards(plan, sched) {
   const { brief } = plan;
   const doneCount = plan.tasks.filter((task) => task.done).length;
   const donePct = plan.tasks.length ? (doneCount / plan.tasks.length) * 100 : 0;
-  const when = sched.ev
-    ? formatDate(sched.ev) + (brief.time ? ` at ${escapeHtml(brief.time)}` : "")
+  const when = sched.eventDate
+    ? formatDate(sched.eventDate) + (brief.time ? ` at ${escapeHtml(brief.time)}` : "")
     : "Add a date in Event details";
   const critical = plan.tasks
     .filter((task) => !task.done && task.priority === "high")
-    .sort((a, b) => (sched.due[a.id] || 0) - (sched.due[b.id] || 0));
+    .sort((a, b) => (sched.due[a.id]?.getTime() ?? 0) - (sched.due[b.id]?.getTime() ?? 0));
   const criticalList = critical.length
     ? `<ul class="mini">${critical
         .slice(0, CRITICAL_TASKS_SHOWN)
@@ -84,6 +115,10 @@ function summaryCards(plan, sched) {
   </div>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @returns {string}
+ */
 function runOfShowCard(plan) {
   const rows = plan.runOfShow
     .slice()
@@ -108,6 +143,10 @@ function runOfShowCard(plan) {
   </div>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @returns {string}
+ */
 function arrivalsAndContacts(plan) {
   const arrivals = plan.vendors
     .filter((vendor) => vendor.arrival)
@@ -154,12 +193,12 @@ function arrivalsAndContacts(plan) {
  * @param {import("../core/risks.js").Analysis} analysis
  */
 export function renderEventDay(analysis) {
-  const plan = state.plan;
+  const plan = requirePlan();
   const panel = $("#panel-eventday");
   setHtml(
     panel,
     `<div class="toolbar"><h2>Event day command center</h2></div>
-    ${summaryCards(plan, analysis.sc)}
+    ${summaryCards(plan, analysis.schedule)}
     ${runOfShowCard(plan)}
     ${arrivalsAndContacts(plan)}
     <div class="ed-grid">${checklistCard(plan, "emergency", "Emergency checklist")}${checklistCard(plan, "weather", "Weather contingency")}</div>
@@ -168,75 +207,107 @@ export function renderEventDay(analysis) {
   bindEventDay(panel);
 }
 
-const quietCommit = (title, change) => commit(title, change, { structural: false });
-
+/** @param {HTMLElement} panel */
 function bindEventDay(panel) {
-  onEach(
-    "[data-rf]",
-    "change",
-    (input) =>
-      quietCommit("Edited run of show", (plan) => {
-        const row = plan.runOfShow.find((x) => x.id === input.closest("[data-rid]").dataset.rid);
-        row[input.dataset.rf] = clip(input.value, 120);
-      }),
-    panel,
-  );
+  bindRunOfShow(panel);
+  bindChecklists(panel);
+  bindContacts(panel);
+}
+
+/**
+ * Editing, removing and adding run-of-show lines.
+ * @param {HTMLElement} panel
+ */
+function bindRunOfShow(panel) {
+  onEach("[data-rf]", "change", editRunOfShowRow, panel);
   onEach(
     "[data-rdel]",
     "click",
     (button) =>
-      quietCommit("Removed schedule item", (plan) => {
+      commitQuietly("Removed schedule item", (plan) => {
         plan.runOfShow = plan.runOfShow.filter((row) => row.id !== button.dataset.rdel);
       }),
     panel,
   );
   onSubmit($("#addRun"), () => {
-    const time = $("#nr-time").value;
-    const item = clip($("#nr-item").value, 120);
+    const time = field("#nr-time").value;
+    const item = clip(field("#nr-item").value, 120);
     if (!time || !item) return;
-    quietCommit("Added schedule item", (plan) =>
-      plan.runOfShow.push({ id: uid(), time, item, owner: clip($("#nr-owner").value, 60) }),
+    const owner = clip(field("#nr-owner").value, 60);
+    commitQuietly("Added schedule item", (plan) =>
+      plan.runOfShow.push({ id: uid(), time, item, owner }),
     );
   });
+}
+
+/**
+ * Saves an edited time, item or owner of a run-of-show line.
+ * @param {HTMLElement} input
+ */
+function editRunOfShowRow(input) {
+  const key = input.dataset.rf;
+  const rowElement = input.closest("[data-rid]");
+  const rowId = rowElement instanceof HTMLElement ? rowElement.dataset.rid : undefined;
+  if (!isOneOf(key, RUN_OF_SHOW_FIELDS)) return;
+  const value = clip(asField(input).value, 120);
+  commitQuietly("Edited run of show", (plan) => {
+    const row = plan.runOfShow.find((x) => x.id === rowId);
+    if (row) row[key] = value;
+  });
+}
+
+/**
+ * Ticking and adding emergency and weather checklist items.
+ * @param {HTMLElement} panel
+ */
+function bindChecklists(panel) {
   onEach(
     "[data-dchk]",
     "change",
     (checkbox) => {
-      const [listKey, itemId] = checkbox.dataset.dchk.split(":");
-      quietCommit("Checklist", (plan) => {
-        plan.dayOf[listKey].find((item) => item.id === itemId).done = checkbox.checked;
+      const [listKey, itemId] = (checkbox.dataset.dchk || "").split(":");
+      if (!isOneOf(listKey, CHECKLIST_KEYS)) return;
+      commitQuietly("Checklist", (plan) => {
+        const item = plan.dayOf[listKey].find((entry) => entry.id === itemId);
+        if (item) item.done = isChecked(checkbox);
       });
     },
     panel,
   );
-  for (const form of panel.querySelectorAll("[data-dadd]")) {
+  for (const form of $$("[data-dadd]", panel)) {
+    const listKey = form.dataset.dadd;
+    if (!isOneOf(listKey, CHECKLIST_KEYS)) continue;
     onSubmit(form, () => {
-      const text = clip(form.querySelector("input").value, 140);
+      const text = clip(field("input", form).value, 140);
       if (!text) return;
-      quietCommit("Added checklist item", (plan) =>
-        plan.dayOf[form.dataset.dadd].push({ id: uid(), text, done: false }),
+      commitQuietly("Added checklist item", (plan) =>
+        plan.dayOf[listKey].push({ id: uid(), text, done: false }),
       );
     });
   }
+}
+
+/**
+ * Removing and adding key contacts.
+ * @param {HTMLElement} panel
+ */
+function bindContacts(panel) {
   onEach(
     "[data-cdel]",
     "click",
     (button) =>
-      quietCommit("Removed contact", (plan) => {
+      commitQuietly("Removed contact", (plan) => {
         plan.dayOf.contacts = plan.dayOf.contacts.filter((c) => c.id !== button.dataset.cdel);
       }),
     panel,
   );
   onSubmit($("#addContact"), () => {
-    const name = clip($("#nc-name").value, 60);
+    const name = clip(field("#nc-name").value, 60);
     if (!name) return;
-    quietCommit("Added contact", (plan) =>
-      plan.dayOf.contacts.push({
-        id: uid(),
-        name,
-        role: clip($("#nc-role").value, 60),
-        phone: clip($("#nc-phone").value, 40),
-      }),
+    const role = clip(field("#nc-role").value, 60);
+    const phone = clip(field("#nc-phone").value, 40);
+    commitQuietly("Added contact", (plan) =>
+      plan.dayOf.contacts.push({ id: uid(), name, role, phone }),
     );
   });
 }

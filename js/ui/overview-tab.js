@@ -6,10 +6,20 @@ import { aiRiskReview } from "../actions/assistant.js";
 import { blockedTasks, nextActions } from "../core/advisor.js";
 import { escapeHtml, formatShortDate } from "../core/format.js";
 import { isClaudeOn } from "../services/claude.js";
-import { state } from "../services/state.js";
-import { $, attrIf, setHtml } from "./dom.js";
+import { requirePlan, state } from "../services/state.js";
+import { $, attrIf, find, setHtml } from "./dom.js";
+
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/risks.js").Analysis} Analysis */
+
+/**
+ * A risk card's content: a rule-based risk, or an AI one (which has no tab to link to).
+ * @typedef {Pick<import("../core/risks.js").Risk, "sev" | "title" | "why" | "action">
+ *   & {tab?: string, source: "rule" | "ai"}} RiskCard
+ */
 
 const DIAL_RADIUS = 46;
+/** @type {Readonly<Record<string, string>>} */
 const BAND_COLORS = { "On track": "var(--good)", "Needs attention": "var(--accent)" };
 const LOG_ENTRIES_SHOWN = 8;
 
@@ -21,7 +31,7 @@ const LOG_ENTRIES_SHOWN = 8;
  */
 function dial(score, band) {
   const circumference = 2 * Math.PI * DIAL_RADIUS;
-  const color = BAND_COLORS[band] || "var(--rose)";
+  const color = Object.hasOwn(BAND_COLORS, band) ? BAND_COLORS[band] : "var(--rose)";
   const filled = ((score / 100) * circumference).toFixed(1);
   return `<svg width="112" height="112" viewBox="0 0 112 112" role="img" aria-label="Health score ${score} out of 100">
     <circle cx="56" cy="56" r="${DIAL_RADIUS}" fill="none" stroke="var(--sunk)" stroke-width="10"/>
@@ -31,7 +41,7 @@ function dial(score, band) {
 
 /**
  * One risk card.
- * @param {import("../core/risks.js").Risk} risk
+ * @param {RiskCard} risk
  * @returns {string}
  */
 function riskItem(risk) {
@@ -47,7 +57,10 @@ function riskItem(risk) {
   </li>`;
 }
 
-/** The status band never says "On track" while a critical or high risk is open. */
+/**
+ * The status band never says "On track" while a critical or high risk is open.
+ * @param {Analysis} analysis
+ */
 function healthBand(analysis) {
   const hasCritical = analysis.risks.some((r) => r.sev === "critical");
   const hasHigh = analysis.risks.some((r) => r.sev === "high");
@@ -58,23 +71,31 @@ function healthBand(analysis) {
   return { band, hasCritical, hasHigh };
 }
 
+/**
+ * @param {import("../core/health.js").HealthComponent} comp
+ * @returns {string}
+ */
 function componentRow(comp) {
-  const barClass = comp.got >= 16 ? "good" : comp.got < 10 ? "over" : "";
-  const details = comp.ded.length
-    ? `<ul class="ded full-row">${comp.ded
-        .map((d) => `<li>−${d.pts}: ${escapeHtml(d.reason)}. ${escapeHtml(d.action)}.</li>`)
+  const barClass = comp.score >= 16 ? "good" : comp.score < 10 ? "over" : "";
+  const details = comp.deductions.length
+    ? `<ul class="ded full-row">${comp.deductions
+        .map((d) => `<li>−${d.points}: ${escapeHtml(d.reason)}. ${escapeHtml(d.action)}.</li>`)
         .join("")}</ul>`
     : `<p class="note full-row flush">${escapeHtml(comp.note || "No deductions.")}</p>`;
   return `<div class="comp-row">
-    <span>${comp.name}</span><span>${comp.got}/${comp.max}</span>
-    <div class="bar"><i class="${barClass}" data-width="${(comp.got / comp.max) * 100}"></i></div>
+    <span>${comp.name}</span><span>${comp.score}/${comp.max}</span>
+    <div class="bar"><i class="${barClass}" data-width="${(comp.score / comp.max) * 100}"></i></div>
     ${details}
   </div>`;
 }
 
+/**
+ * @param {Analysis} analysis
+ * @returns {string}
+ */
 function healthCard(analysis) {
   const { band, hasCritical, hasHigh } = healthBand(analysis);
-  const { score, comps } = analysis.health;
+  const { score, components } = analysis.health;
   const openRiskNote =
     hasCritical || hasHigh
       ? `<p class="hint strong">${hasCritical ? "A critical" : "A high"} risk is open, so the status reads “${band}” whatever the score.</p>`
@@ -82,19 +103,23 @@ function healthCard(analysis) {
   return `<div class="card">
     <h2>Event health</h2>
     <div class="dial">${dial(score, band)}<div><div class="big">${score}</div><div class="note">out of 100 · ${band}</div></div></div>
-    <div class="comp">${comps.map(componentRow).join("")}</div>
+    <div class="comp">${components.map(componentRow).join("")}</div>
     ${openRiskNote}
     <p class="hint">Fixed rules, no AI: each area starts at 20 and loses points only for things Marigold can check (dates, money, statuses you set).</p>
   </div>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @returns {string}
+ */
 function aiReviewSection(plan) {
   const claudeOn = isClaudeOn();
   const busy = !!state.busy.risks;
   const review = plan.aiRisks;
   const results = review?.items.length
     ? `<p class="hint">Contextual insights from Claude${review.rev !== plan.rev ? " (from an earlier version of the plan)" : ""}. These are advice and don't change the score.</p>
-       <ul class="risks">${review.items.map((risk) => riskItem({ ...risk, source: "ai" })).join("")}</ul>`
+       <ul class="risks">${review.items.map(riskItem).join("")}</ul>`
     : "";
   return `<div class="toolbar">
       <h3 class="subhead grow">AI risk review</h3>
@@ -104,6 +129,11 @@ function aiReviewSection(plan) {
     <div id="aiRiskOut">${results}</div>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @param {import("../core/scheduler.js").Schedule} sched
+ * @returns {string}
+ */
 function doNextSection(plan, sched) {
   const actions = nextActions(plan, sched);
   const blocked = blockedTasks(plan).length;
@@ -119,7 +149,7 @@ function doNextSection(plan, sched) {
     list = `<ol class="mini donext" aria-labelledby="doNextTitle">${items.join("")}</ol>`;
   } else {
     let message = "Nothing urgent: no ready task is due in the next 30 days.";
-    if (!sched.ev) message = "Add an event date to see what to do next.";
+    if (!sched.eventDate) message = "Add an event date to see what to do next.";
     else if (plan.tasks.every((task) => task.done)) message = "Everything is done.";
     list = `<p class="hint">${message}</p>`;
   }
@@ -131,11 +161,17 @@ function doNextSection(plan, sched) {
     <p class="hint">Ranked by rules, not AI: only tasks whose prerequisites are done, ordered by due date, priority and how much they unblock.${waiting}</p>`;
 }
 
+/**
+ * @param {Plan} plan
+ * @returns {string}
+ */
 function changeLog(plan) {
   if (!plan.log.length) {
     return '<p class="hint">Applied, rejected and undone changes appear here.</p>';
   }
+  /** @type {Intl.DateTimeFormatOptions} */
   const timeFormat = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  /** @type {Readonly<Record<string, string>>} */
   const originBadges = {
     ai: '<span class="badge ai">AI</span>',
     rule: '<span class="badge rule">Rule</span>',
@@ -154,7 +190,7 @@ function changeLog(plan) {
  * @param {import("../core/risks.js").Analysis} analysis
  */
 export function renderOverview(analysis) {
-  const plan = state.plan;
+  const plan = requirePlan();
   const risks = analysis.risks.length
     ? `<ul class="risks">${analysis.risks.map(riskItem).join("")}</ul>`
     : '<div class="callout ok">No rule-based risks found right now.</div>';
@@ -166,11 +202,11 @@ export function renderOverview(analysis) {
         <div class="toolbar"><h2>Risks and next steps</h2></div>
         ${risks}
         ${aiReviewSection(plan)}
-        ${doNextSection(plan, analysis.sc)}
+        ${doNextSection(plan, analysis.schedule)}
         <h3 class="subhead spaced">Change log</h3>
         ${changeLog(plan)}
       </div>
     </div>`,
   );
-  $("#aiRiskBtn")?.addEventListener("click", aiRiskReview);
+  find("#aiRiskBtn")?.addEventListener("click", aiRiskReview);
 }

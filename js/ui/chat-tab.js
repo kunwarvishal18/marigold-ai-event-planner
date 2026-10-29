@@ -4,14 +4,21 @@
 import { sendChat } from "../actions/assistant.js";
 import { escapeHtml, formatMoney } from "../core/format.js";
 import { isClaudeOn } from "../services/claude.js";
-import { state } from "../services/state.js";
-import { $, attrIf, onEach, setHtml } from "./dom.js";
+import { requirePlan, state } from "../services/state.js";
+import { $, $$, $as, attrIf, field, onEach, setHtml } from "./dom.js";
 
 const MESSAGES_SHOWN = 40;
 /** Suggested budget cuts are rounded to a lakh for INR, or a thousand otherwise. */
 const ROUNDING = { INR: 100_000, other: 1000 };
 
-/** Example requests tailored to the plan. */
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/model.js").ChatMessage} ChatMessage */
+
+/**
+ * Example requests tailored to the plan.
+ * @param {Plan} plan
+ * @returns {string[]}
+ */
 function suggestions(plan) {
   const { brief } = plan;
   const step = brief.currency === "INR" ? ROUNDING.INR : ROUNDING.other;
@@ -25,10 +32,20 @@ function suggestions(plan) {
   ];
 }
 
-/** Identifies a message across renders, so unchanged messages are never re-inserted. */
+/**
+ * Identifies a message across renders, so unchanged messages are never re-inserted.
+ * @param {ChatMessage} message
+ * @param {string} planId
+ * @returns {string}
+ */
 const messageKey = (message, planId) =>
   `${planId}:${message.at || 0}:${message.role}:${message.text.length}`;
 
+/**
+ * @param {ChatMessage} message
+ * @param {string} key
+ * @returns {string}
+ */
 const messageHtml = (message, key) =>
   `<div class="msg ${escapeHtml(message.role)}" data-key="${escapeHtml(key)}">${escapeHtml(message.text)}</div>`;
 
@@ -40,12 +57,16 @@ const THINKING =
  * already there, so screen readers announce only the new reply rather than the whole conversation.
  * The list is rebuilt only when it no longer starts with what's on screen (another plan, or older
  * messages trimmed).
+ * @param {HTMLElement} box
+ * @param {Plan} plan
+ * @param {boolean} claudeOn
+ * @param {boolean} busy
  */
 function renderMessages(box, plan, claudeOn, busy) {
   box.querySelector("[data-thinking]")?.remove();
   const messages = plan.chat.slice(-MESSAGES_SHOWN);
   const keys = messages.map((message) => messageKey(message, plan.id));
-  const shown = [...box.querySelectorAll("[data-key]")].map((element) => element.dataset.key);
+  const shown = $$("[data-key]", box).map((element) => element.dataset.key);
   const isPrefix = shown.length > 0 && shown.every((key, i) => key === keys[i]);
 
   if (!messages.length) {
@@ -67,7 +88,7 @@ function renderMessages(box, plan, claudeOn, busy) {
 
 /** Renders the conversation and the controls that depend on Claude being available. */
 export function renderChat() {
-  const plan = state.plan;
+  const plan = requirePlan();
   const claudeOn = isClaudeOn();
   const busy = !!state.busy.chat;
   renderMessages($("#msgs"), plan, claudeOn, busy);
@@ -82,30 +103,30 @@ export function renderChat() {
       )
       .join(""),
   );
-  onEach("[data-sugg]", "click", (button) => sendChat(button.dataset.sugg), suggest);
+  onEach("[data-sugg]", "click", (button) => sendChat(button.dataset.sugg || ""), suggest);
 
-  $("#askBtn").disabled = !claudeOn || busy;
-  $("#askInput").disabled = !claudeOn;
+  $as(HTMLButtonElement, "#askBtn").disabled = !claudeOn || busy;
+  field("#askInput").disabled = !claudeOn;
   $("#stopChat").hidden = !busy;
   $("#chatHint").textContent = claudeOn ? "" : "Needs Claude";
 }
 
 /** Empties the message box after a message is sent. */
 export function clearChatInput() {
-  $("#askInput").value = "";
+  field("#askInput").value = "";
 }
 
 /** Wires the message form: Enter sends, Shift+Enter adds a new line, Stop cancels. */
 export function bindChat() {
   $("#askForm").addEventListener("submit", (event) => {
     event.preventDefault();
-    sendChat($("#askInput").value);
+    sendChat(field("#askInput").value);
   });
-  $("#askInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+  field("#askInput").addEventListener("keydown", (event) => {
+    if (event instanceof KeyboardEvent && event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      sendChat($("#askInput").value);
+      sendChat(field("#askInput").value);
     }
   });
-  $("#stopChat").addEventListener("click", () => state.ctl.chat?.abort());
+  $("#stopChat").addEventListener("click", () => state.abortControllers.chat?.abort());
 }

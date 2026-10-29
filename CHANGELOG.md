@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Code quality release. Behaviour is unchanged: 111 unit tests and 222 browser checks (both builds) pass, and the mutation spot-check still catches 8/8.
+
+### Type safety
+
+- The whole codebase now passes a **strict TypeScript check** of its JSDoc types (`npm run typecheck`, run in CI and by `npm test`). Before this change the same check reported 1,240 errors (missing parameter types, unchecked `null`, `.value` on untyped elements, indexing objects by arbitrary strings).
+- Precise types for the plan model, Claude's generated content, proposals, diffs, the health score and the app state. The fixed vocabularies (priorities, origins, sources, chat roles, severities) are `const` lists with derived types, checked with one shared `isOneOf()` / `oneOf()`.
+- Untrusted input (Claude replies, storage, proposals) is typed `unknown` and narrowed by the validators. DOM lookups are checked at runtime (`$`, `find`, `field`, `$as` in `ui/dom.js`), and `requirePlan()` replaces unchecked `state.plan` access.
+- Host capabilities are checked before use: a non-function `sample` capability now counts as "Claude unavailable" instead of failing on the first request.
+
+### Structure and complexity
+
+- Split `core/risks.js` (health score moved to `core/health.js`), `core/proposal.js` (diff moved to `core/plan-diff.js`) and `ui/vendors-tab.js` (card markup moved to `ui/vendor-card.js`).
+- Every function is now at most 60 lines with cyclomatic complexity at most 12 and nesting depth at most 3; ESLint enforces these limits (previously 80, 20 and 4). 19 functions were split, e.g. `buildPlan`, `checkEvent`, `vendorActions`, `applyBudgetChanges`, `briefErrors`, `bindEventDay`.
+
+### Duplication
+
+- One `moneyIn(currency)` formatter replaces eight copies of the same closure; one `commitQuietly()` replaces two local helpers and three inline option objects; one `daysToBook()` rule is shared by the risk check and the vendor card; plan size limits (`PLAN_LIMITS`) are defined once instead of in three files.
+
+### Naming
+
+- Clearer names for analysis and state fields: `sc` → `schedule`, `ev` → `eventDate`, `comps`/`ded`/`got`/`pts` → `components`/`deductions`/`score`/`points`, `alloc`/`contPct` → `allocated`/`contingencyPct`, `openV` → `expandedVendors`, `ctl` → `abortControllers`, `seq` → `requestNumbers`, scenario `b`/`sub`/`days` → `brief`/`summary`/`daysAway`. The stored plan format is unchanged.
+
+### Fixes found by the type check
+
+- `scenarioBrief()` leaked its internal `days` field into the brief it returned.
+- An empty "Budget category" choice stored `""` instead of `null` until the next reload.
+- The CSV-cell comment contained `@,` which TypeScript 6 parsed as a JSDoc tag.
+
 ## 3.4.0 (2026-10-29)
 
 Security, accessibility, testing and efficiency release. No features removed.

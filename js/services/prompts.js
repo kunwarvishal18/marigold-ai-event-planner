@@ -19,6 +19,7 @@ const SAFETY =
   `${DATA_RULE} Never invent real business names, phone numbers, ratings, reviews, availability ` +
   "or live weather. Any cost is an approximate estimate in the event's currency, not a quote.";
 
+/** @param {import("../core/model.js").Brief} brief */
 const daysUntil = (brief) => {
   const eventDate = parseIsoDate(brief.date);
   return eventDate ? daysBetween(today(), eventDate) : null;
@@ -87,8 +88,9 @@ Rules: 6-10 budget categories whose pct values add up to 100 and include one nam
 export function planContext(plan) {
   const analysis = analyze(plan);
   const { brief } = plan;
-  const sched = analysis.sc;
-  const dueOf = (task) => sched.due[task.id] || 0;
+  const sched = analysis.schedule;
+  /** @param {import("../core/model.js").Task} task */
+  const dueOf = (task) => sched.due[task.id]?.getTime() ?? 0;
   const pcts = pctList(
     plan.budget.map((line) => line.amount),
     brief.budget,
@@ -107,7 +109,8 @@ export function planContext(plan) {
   const taskLines =
     pending
       .map((task) => {
-        const due = sched.due[task.id] ? toIsoDate(sched.due[task.id]) : "no date";
+        const dueDate = sched.due[task.id];
+        const due = dueDate ? toIsoDate(dueDate) : "no date";
         return `- ${task.id} | ${task.title} | ${due} | ${task.priority}`;
       })
       .join("\n") || "- none";
@@ -115,9 +118,8 @@ export function planContext(plan) {
     .map((vendor) => {
       const critical = vendor.critical ? " (critical)" : "";
       const quote = isNumeric(vendor.quote) ? `, quote ${vendor.quote}` : "";
-      const bookBy = sched.vendorDue[vendor.id]
-        ? `, book by ${toIsoDate(sched.vendorDue[vendor.id])}`
-        : "";
+      const bookByDate = sched.vendorDue[vendor.id];
+      const bookBy = bookByDate ? `, book by ${toIsoDate(bookByDate)}` : "";
       return `- ${vendor.category}${critical}: ${vendor.status}, ${vendor.payment}${quote}${bookBy}`;
     })
     .join("\n");

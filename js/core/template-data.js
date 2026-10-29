@@ -10,6 +10,17 @@
  * ideas [title, detail, tag]; run [time, item, owner].
  * Wedding lead times are in weeks, the others in days.
  */
+/**
+ * @typedef {object} Template
+ * @property {Array<[string, number, string]>} budget [category, percent, note]
+ * @property {Array<[number, string, string[]]>} phases [lead time, phase, task titles]
+ * @property {Array<[string, boolean, number, string, string[], string[]]>} vendors
+ *   [category, critical, lead time, budget category, checklist, questions]
+ * @property {Array<[string, string, string]>} ideas [title, detail, tag]
+ * @property {Array<[string, string, string]>} run [time, item, owner]
+ */
+
+/** @type {Readonly<Record<string, Template>>} */
 export const TEMPLATES = {
   Wedding: {
     budget: [

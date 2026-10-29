@@ -3,7 +3,12 @@
  */
 import { TEMPLATES } from "./template-data.js";
 
-/** Wedding lead times in TEMPLATES are in weeks; the other event types use days. */
+/**
+ * Wedding lead times in TEMPLATES are in weeks; the other event types use days.
+ * @param {string} type
+ * @param {number} value
+ * @returns {number}
+ */
 const leadTimeInDays = (type, value) => (type === "Wedding" ? value * 7 : value);
 
 /**
@@ -14,6 +19,7 @@ const leadTimeInDays = (type, value) => (type === "Wedding" ? value * 7 : value)
  */
 export function templateData(type) {
   const template = TEMPLATES[type] || TEMPLATES.Wedding;
+  /** @type {import("./validation.js").GeneratedTask[]} */
   const tasks = [];
   template.phases.forEach(([leadTime, phase, titles]) => {
     titles.forEach((title) => {

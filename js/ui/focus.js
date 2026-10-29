@@ -26,20 +26,31 @@ function remember() {
   return { selector: selectorFor(active), container: active.closest("[role=tabpanel]") };
 }
 
-const isUsable = (element) => !!element && element.isConnected && !element.closest("[hidden]");
+/**
+ * @param {Element|null} element
+ * @returns {element is HTMLElement} true for a connected, visible, enabled element
+ */
+const isUsable = (element) =>
+  element instanceof HTMLElement &&
+  element.isConnected &&
+  !element.closest("[hidden]") &&
+  !(element instanceof HTMLButtonElement && element.disabled);
 
-/** Puts focus back after a render, but only if the render took it away. */
+/**
+ * Puts focus back after a render, but only if the render took it away.
+ * @param {FocusMemo|null} memo
+ */
 function restore(memo) {
   if (!memo) return;
   const active = document.activeElement;
   if (active && active !== document.body && active.isConnected) return;
   const candidates = [
-    memo.selector && document.querySelector(memo.selector),
+    memo.selector ? document.querySelector(memo.selector) : null,
     memo.container,
     document.getElementById("pTitle"),
     document.getElementById("main"),
   ];
-  const target = candidates.find((element) => isUsable(element) && !element.disabled);
+  const target = candidates.find(isUsable);
   target?.focus({ preventScroll: true });
 }
 

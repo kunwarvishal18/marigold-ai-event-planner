@@ -1,4 +1,4 @@
-# Runs the dependency audit, formatting and lint checks, the jsPDF SRI check, a mutation spot-check,
+# Runs the dependency audit, formatting, lint and strict type checks, the jsPDF SRI check, a mutation spot-check,
 # the build check, unit tests with coverage thresholds and browser tests (both builds, including
 # axe-core accessibility scans) on every push and pull request.
 name: CI
@@ -32,7 +32,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Mutation spot-check (tests must catch deliberately broken rules)
         run: npm run test:mutation
-      - name: Lint, build check, unit tests with coverage, browser tests
+      - name: Lint, type check, build check, unit tests with coverage, browser tests
         run: npm test
         env:
           MG_REPORT: e2e-report.json

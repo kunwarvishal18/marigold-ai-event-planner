@@ -5,8 +5,8 @@
 
 /**
  * @typedef {object} AppState
- * @property {Function|null} sample Claude sampling capability from the host (null when absent)
- * @property {object|null} downloads file-download capability from the host (null when absent)
+ * @property {ClaudeSampleCapability|null} sample Claude sampling from the host (null when absent)
+ * @property {ClaudeDownloadsCapability|null} downloads file downloads from the host (null when absent)
  * @property {"checking"|"on"|"off"|"declined"} ai Claude connection status
  * @property {import("../core/model.js").Plan|null} plan the open plan
  * @property {import("../core/proposal.js").Proposal|null} proposal the change awaiting approval
@@ -14,9 +14,10 @@
  * @property {"create"|"edit"} mode whether the brief form creates a plan or edits the open one
  * @property {string} type event type picked in the brief form
  * @property {Record<string, boolean>} busy which long-running requests are in flight
- * @property {Record<string, number>} seq latest request number per kind; older replies are dropped
- * @property {Record<string, AbortController>} ctl abort controllers per request kind
- * @property {Set<string>} openV vendor cards the person has expanded
+ * @property {Record<string, number>} requestNumbers latest request number per kind; older
+ *   replies are dropped
+ * @property {Record<string, AbortController>} abortControllers per request kind (Stop buttons)
+ * @property {Set<string>} expandedVendors ids of the vendor cards the person has opened
  * @property {"all"|"pending"|"overdue"|"high"} filter timeline filter
  * @property {string} protect optimizer "protect" note
  * @property {string} ideaFocus ideas "focus" note
@@ -33,13 +34,23 @@ export const state = {
   mode: "create",
   type: "Wedding",
   busy: {},
-  seq: {},
-  ctl: {},
-  openV: new Set(),
+  requestNumbers: {},
+  abortControllers: {},
+  expandedVendors: new Set(),
   filter: "all",
   protect: "",
   ideaFocus: "",
 };
+
+/**
+ * The open plan, for code that only runs while a plan is open (plan actions, plan tabs). Its
+ * absence there is a bug, so this throws instead of handing back null.
+ * @returns {import("../core/model.js").Plan}
+ */
+export function requirePlan() {
+  if (!state.plan) throw new Error("Marigold: no plan is open");
+  return state.plan;
+}
 
 /**
  * Starts a new request of the given kind and returns its sequence number. A reply is only used if
@@ -48,8 +59,8 @@ export const state = {
  * @returns {number}
  */
 export function startRequest(kind) {
-  state.seq[kind] = (state.seq[kind] || 0) + 1;
-  return state.seq[kind];
+  state.requestNumbers[kind] = (state.requestNumbers[kind] || 0) + 1;
+  return state.requestNumbers[kind];
 }
 
 /**
@@ -57,7 +68,7 @@ export function startRequest(kind) {
  * @param {number} seq the number startRequest returned
  * @returns {boolean} true if no newer request of this kind has started since
  */
-export const isLatest = (kind, seq) => state.seq[kind] === seq;
+export const isLatest = (kind, seq) => state.requestNumbers[kind] === seq;
 
 /**
  * True when a reply for `planId` may still be applied: it's the latest request of its kind and the

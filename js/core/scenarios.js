@@ -4,16 +4,25 @@
 import { addDays, toIsoDate, today } from "./dates.js";
 
 /**
- * Demo briefs offered on the welcome screen. `days` is how far from today the event is set.
+ * @typedef {object} Scenario
+ * @property {string} label
+ * @property {string} summary one line shown under the label
+ * @property {Omit<import("./model.js").Brief, "date"> & {daysAway: number}} brief the event is
+ *   set `daysAway` days from today
+ */
+
+/**
+ * Demo briefs offered on the welcome screen.
+ * @type {Scenario[]}
  */
 export const SCENARIOS = [
   {
     label: "Jaipur wedding",
-    sub: "250 guests · ₹25,00,000 · Rajasthani heritage",
-    b: {
+    summary: "250 guests · ₹25,00,000 · Rajasthani heritage",
+    brief: {
       type: "Wedding",
       name: "Aanya & Rohan's wedding",
-      days: 240,
+      daysAway: 240,
       time: "17:00",
       guests: 250,
       venueCapacity: 300,
@@ -27,11 +36,11 @@ export const SCENARIOS = [
   },
   {
     label: "Bengaluru garden birthday",
-    sub: "40 guests · ₹25,000 · sustainable",
-    b: {
+    summary: "40 guests · ₹25,000 · sustainable",
+    brief: {
       type: "Birthday",
       name: "Meera's 30th garden party",
-      days: 21,
+      daysAway: 21,
       time: "16:00",
       guests: 40,
       venueCapacity: null,
@@ -44,11 +53,11 @@ export const SCENARIOS = [
   },
   {
     label: "Bengaluru sustainability festival",
-    sub: "500 guests · ₹1,00,000 · community",
-    b: {
+    summary: "500 guests · ₹1,00,000 · community",
+    brief: {
       type: "Community event",
       name: "Green Neighbourhood Festival",
-      days: 60,
+      daysAway: 60,
       time: "09:00",
       guests: 500,
       venueCapacity: 800,
@@ -63,9 +72,10 @@ export const SCENARIOS = [
 ];
 /**
  * Turns a scenario into a brief dated relative to today.
- * @param {(typeof SCENARIOS)[number]} scenario
- * @returns {object} an event brief
+ * @param {Scenario} scenario
+ * @returns {import("./model.js").Brief}
  */
 export function scenarioBrief(scenario) {
-  return { ...scenario.b, date: toIsoDate(addDays(today(), scenario.b.days)) };
+  const { daysAway, ...brief } = scenario.brief;
+  return { ...brief, date: toIsoDate(addDays(today(), daysAway)) };
 }

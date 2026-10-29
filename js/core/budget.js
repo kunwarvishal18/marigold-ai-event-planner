@@ -7,11 +7,10 @@ import { isNumeric, sum } from "./util.js";
 const EPSILON = 1e-9;
 
 /**
- * @typedef {object} FitResult
- * @property {boolean} ok
- * @property {number[]} [amounts] whole amounts, one per target, that add up exactly to the total
- * @property {"no-lines"|"floors"|"locked"|"rounding"} [reason] why no fit was possible
- * @property {number} [shortfall] how far the floors exceed the total, when reason is "floors"
+ * Either whole amounts, one per target, that add up exactly to the total, or why no fit was
+ * possible (with how far the floors exceed the total when the reason is "floors").
+ * @typedef {{ok: true, amounts: number[]}
+ *   | {ok: false, reason: "no-lines"|"floors"|"locked"|"rounding", shortfall?: number}} FitResult
  */
 
 /**
@@ -34,9 +33,9 @@ export function fitToTotal(targets, floors, requestedTotal, locked = []) {
   if (!count) return total === 0 ? { ok: true, amounts: [] } : { ok: false, reason: "no-lines" };
 
   const lockedSet = new Set(locked);
-  const floorOf = targets.map((_, i) => Math.max(0, Math.ceil(+floors[i] || 0)));
+  const floorOf = targets.map((_, i) => Math.max(0, Math.ceil(Number(floors[i]) || 0)));
   const wanted = targets.map((target, i) => {
-    const value = isNumeric(target) && +target > 0 ? +target : 0;
+    const value = isNumeric(target) && Number(target) > 0 ? Number(target) : 0;
     return Math.max(lockedSet.has(i) ? Math.round(value) : value, floorOf[i]);
   });
   lockedSet.forEach((i) => {
@@ -55,7 +54,11 @@ export function fitToTotal(targets, floors, requestedTotal, locked = []) {
 
 /**
  * Moves the gap between sum(wanted) and total onto the free lines, keeping fractions.
- * @returns {{ok: true, values: number[]} | FitResult}
+ * @param {number[]} wanted target per line, already at or above its floor
+ * @param {number[]} floorOf minimum per line
+ * @param {number[]} free indexes of the lines that may change
+ * @param {number} total the sum to reach
+ * @returns {{ok: true, values: number[]} | Extract<FitResult, {ok: false}>}
  */
 function spreadDifference(wanted, floorOf, free, total) {
   const difference = total - sum(wanted);
@@ -86,6 +89,11 @@ function spreadDifference(wanted, floorOf, free, total) {
 
 /**
  * Rounds fractional amounts down, then distributes the leftover units by largest remainder.
+ * @param {number[]} values fractional amounts that add up to the total
+ * @param {number[]} floorOf minimum per line
+ * @param {number[]} free indexes of the lines that may change
+ * @param {Set<number>} lockedSet indexes of lines kept exactly
+ * @param {number} total the sum to reach
  * @returns {FitResult}
  */
 function roundToTotal(values, floorOf, free, lockedSet, total) {
@@ -93,7 +101,7 @@ function roundToTotal(values, floorOf, free, lockedSet, total) {
     lockedSet.has(i) ? value : Math.max(floorOf[i], Math.floor(value + 1e-7)),
   );
   let remaining = total - sum(amounts);
-  const fraction = (i) => values[i] - Math.floor(values[i]);
+  const fraction = (/** @type {number} */ i) => values[i] - Math.floor(values[i]);
   const order = free.slice().sort((a, b) => fraction(b) - fraction(a));
 
   for (let k = 0; remaining > 0 && order.length; k = (k + 1) % order.length) {

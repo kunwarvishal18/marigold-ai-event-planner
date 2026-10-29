@@ -10,39 +10,83 @@ import {
   PRIORITIES,
   TIME_PATTERN,
   isContingency,
+  isOneOf,
+  oneOf,
 } from "./constants.js";
 import { daysBetween, parseIsoDate, today } from "./dates.js";
-import { formatDate, formatMoney } from "./format.js";
+import { formatMoney, moneyIn } from "./format.js";
 import { matchLine, newVendor } from "./model.js";
-import { analyze } from "./risks.js";
+import { diffPlans } from "./plan-diff.js";
 import { validIdea } from "./validation.js";
 import {
   MAX_AMOUNT,
   clip,
   deepClone,
   isNumeric,
+  isPlainObject,
   normalizeName,
   safeAmount,
   sum,
   uid,
 } from "./util.js";
 
-/** Free-text brief fields a proposal may change, with their maximum lengths. */
-const TEXT_LIMITS = { name: 90, city: 80, style: 120, notes: 600 };
+/** @typedef {import("./model.js").Plan} Plan */
+/** @typedef {import("./model.js").CorePlan} CorePlan */
+/** @typedef {import("./model.js").BudgetLine} BudgetLine */
+/** @typedef {import("./model.js").ItemOrigin} ItemOrigin */
+/** @typedef {Record<string, unknown>} Raw an object from Claude or the UI, not yet checked */
+
+/**
+ * Free-text brief fields a proposal may change, with their maximum lengths.
+ * @type {Array<["name"|"city"|"style"|"notes", number]>}
+ */
+const TEXT_LIMITS = [
+  ["name", 90],
+  ["city", 80],
+  ["style", 120],
+  ["notes", 600],
+];
+
+/**
+ * Whole-number brief fields a proposal may change: [field, maximum, warning when out of range].
+ * Both must be at least 1.
+ * @type {Array<["budget"|"guests", number, string]>}
+ */
+const WHOLE_NUMBER_FIELDS = [
+  ["budget", MAX_AMOUNT, "Ignored an invalid budget value."],
+  ["guests", MAX_GUESTS, "Ignored an invalid guest count."],
+];
+
+/**
+ * @param {unknown} value
+ * @returns {value is string} true for "" (no start time) or HH:MM
+ */
+const isStartTime = (value) =>
+  typeof value === "string" && (value === "" || TIME_PATTERN.test(value));
 
 /**
  * Brief fields that only accept known values. A proposal with anything else is ignored for that
  * field (with a warning), so model output can never put arbitrary text where the app expects a
  * code, a time or an event type.
+ * @type {Array<["type"|"currency"|"time", (value: unknown) => value is string, string]>}
  */
-const CHECKED_FIELDS = {
-  type: { valid: (v) => EVENT_TYPES.includes(v), warning: "Ignored an unknown event type." },
-  currency: { valid: (v) => CURRENCIES.includes(v), warning: "Ignored an unsupported currency." },
-  time: {
-    valid: (v) => v === "" || TIME_PATTERN.test(v),
-    warning: "Ignored an invalid start time.",
-  },
-};
+const CHECKED_FIELDS = [
+  ["type", (value) => isOneOf(value, EVENT_TYPES), "Ignored an unknown event type."],
+  ["currency", (value) => isOneOf(value, CURRENCIES), "Ignored an unsupported currency."],
+  ["time", isStartTime, "Ignored an invalid start time."],
+];
+
+/**
+ * What a proposal asks to change. Everything is untrusted (it may come from Claude) and checked
+ * as it is applied.
+ * @typedef {object} ProposalChanges
+ * @property {unknown} [brief] brief fields to change
+ * @property {unknown} [budget] a new allocation: [{category, amount, note?, locked?}]
+ * @property {unknown} [addTasks] [{title, phase?, daysBefore?, priority?}]
+ * @property {unknown} [removeTaskIds]
+ * @property {unknown} [addVendors] [{category, critical?, budgetCategory?, bookByDaysBefore?, ...}]
+ * @property {unknown} [addIdeas] [{title, detail, tag?, costLow?, costHigh?}]
+ */
 
 /**
  * @typedef {object} ProposalSpec
@@ -51,39 +95,59 @@ const CHECKED_FIELDS = {
  * @property {string} title
  * @property {string} [explanation]
  * @property {string[]} [tradeoffs]
- * @property {object} changes {brief?, budget?, addTasks?, removeTaskIds?, addVendors?, addIdeas?}
+ * @property {ProposalChanges} changes
  * @property {string} [request] the user's message, for chat proposals
  */
 
 /**
  * @typedef {object} Proposal
  * @property {string} id
+ * @property {ProposalSpec["origin"]} origin
+ * @property {string} kind
+ * @property {string} title
+ * @property {string} explanation
+ * @property {string[]} tradeoffs
  * @property {string[]} warnings what Marigold adjusted or ignored
  * @property {string|null} blocked why it can't be applied, if it can't
  * @property {number} baseRev the plan revision it was made against
  * @property {string} planId
- * @property {import("./model.js").Plan} after the plan as it would be after applying
- * @property {object} diff see diffPlans()
+ * @property {CorePlan} after the plan as it would be after applying
+ * @property {import("./plan-diff.js").PlanDiff} diff
+ * @property {string} [request]
  * @property {"pending"|"stale"} status
  */
 
 /**
- * The plan without undo history, chat and log: the part a proposal or undo snapshot replaces.
- * @param {import("./model.js").Plan} plan
- * @returns {import("./model.js").Plan}
+ * A copy of the plan without undo history, chat and log: the part a proposal or undo snapshot
+ * replaces.
+ * @param {CorePlan & Partial<Pick<Plan, "history" | "chat" | "log">>} plan
+ * @returns {CorePlan}
  */
 export function corePlan(plan) {
-  const copy = deepClone(plan);
-  delete copy.history;
-  delete copy.chat;
-  delete copy.log;
-  return copy;
+  const { history, chat, log, ...core } = deepClone(plan);
+  return core;
 }
+
+/**
+ * The items of an untrusted list that are objects.
+ * @param {unknown} list
+ * @returns {Raw[]}
+ */
+const objects = (list) => (Array.isArray(list) ? list.filter(isPlainObject) : []);
+
+/**
+ * Every item of an untrusted list as clipped text.
+ * @param {unknown} list
+ * @param {number} maxLength
+ * @returns {string[]}
+ */
+const clipEach = (list, maxLength) =>
+  Array.isArray(list) ? list.map((text) => clip(text, maxLength)) : [];
 
 /**
  * Applies a requested change to a copy of `base` and describes the result.
  * Money always adds up exactly; committed spend is never cut; past dates are refused.
- * @param {import("./model.js").Plan} base the current plan (not modified)
+ * @param {CorePlan} base the current plan (not modified)
  * @param {ProposalSpec} spec
  * @returns {Proposal}
  */
@@ -92,10 +156,13 @@ export function makeProposal(
   { origin, kind, title, explanation, tradeoffs, changes, request },
 ) {
   const after = corePlan(base);
+  /** @type {string[]} */
   const warnings = [];
+  /** @type {ItemOrigin} */
   const itemOrigin = origin === "ai" ? "ai" : "you";
 
-  let blocked = applyBriefChanges(base, after, changes.brief || {}, warnings);
+  const brief = isPlainObject(changes.brief) ? changes.brief : {};
+  let blocked = applyBriefChanges(base, after, brief, warnings);
   const budgetBlock = applyBudgetChanges(base, after, changes.budget, origin, warnings);
   blocked = budgetBlock || blocked;
 
@@ -126,38 +193,47 @@ export function makeProposal(
   };
 }
 
-/** Budget, guests, date and venue capacity: numbers and dates are range-checked. */
+/**
+ * Budget, guests, date and venue capacity: numbers and dates are range-checked.
+ * @param {CorePlan} after
+ * @param {Raw} brief
+ * @param {string[]} warnings
+ */
 function applyNumericBriefChanges(after, brief, warnings) {
-  if (brief.budget != null) {
-    const budget = Math.round(+brief.budget);
-    if (budget > 0 && budget <= MAX_AMOUNT) after.brief.budget = budget;
-    else warnings.push("Ignored an invalid budget value.");
-  }
-  if (brief.guests != null) {
-    const guests = Math.round(+brief.guests);
-    if (guests >= 1 && guests <= MAX_GUESTS) after.brief.guests = guests;
-    else warnings.push("Ignored an invalid guest count.");
+  for (const [field, max, warning] of WHOLE_NUMBER_FIELDS) {
+    if (brief[field] == null) continue;
+    const value = Math.round(Number(brief[field]));
+    if (value >= 1 && value <= max) after.brief[field] = value;
+    else warnings.push(warning);
   }
   if (brief.date != null) {
-    if (parseIsoDate(brief.date)) after.brief.date = brief.date;
+    if (typeof brief.date === "string" && parseIsoDate(brief.date)) after.brief.date = brief.date;
     else warnings.push("Ignored an invalid date.");
   }
   if ("venueCapacity" in brief) {
-    const capacity = Math.round(+brief.venueCapacity);
+    const capacity = Math.round(Number(brief.venueCapacity));
     after.brief.venueCapacity = brief.venueCapacity != null && capacity > 0 ? capacity : null;
   }
 }
 
-/** @returns {string|null} a reason the change is blocked, if any */
+/**
+ * @param {CorePlan} base
+ * @param {CorePlan} after
+ * @param {Raw} brief
+ * @param {string[]} warnings
+ * @returns {string|null} a reason the change is blocked, if any
+ */
 function applyBriefChanges(base, after, brief, warnings) {
   applyNumericBriefChanges(after, brief, warnings);
-  for (const [field, limit] of Object.entries(TEXT_LIMITS)) {
-    if (typeof brief[field] === "string") after.brief[field] = clip(brief[field], limit);
+  for (const [field, limit] of TEXT_LIMITS) {
+    const value = brief[field];
+    if (typeof value === "string") after.brief[field] = clip(value, limit);
   }
-  for (const [field, rule] of Object.entries(CHECKED_FIELDS)) {
-    if (brief[field] == null) continue;
-    if (rule.valid(brief[field])) after.brief[field] = brief[field];
-    else warnings.push(rule.warning);
+  for (const [field, isValid, warning] of CHECKED_FIELDS) {
+    const value = brief[field];
+    if (value == null) continue;
+    if (isValid(value)) after.brief[field] = value;
+    else warnings.push(warning);
   }
   if (after.brief.currency !== base.brief.currency) {
     warnings.push("Currency changed: amounts are relabelled, not converted.");
@@ -173,25 +249,19 @@ function applyBriefChanges(base, after, brief, warnings) {
 
 /**
  * Applies a new allocation (or rescales for a new total) so the budget adds up exactly.
+ * @param {CorePlan} base
+ * @param {CorePlan} after
+ * @param {unknown} proposedLines
+ * @param {ProposalSpec["origin"]} origin
+ * @param {string[]} warnings
  * @returns {string|null} a reason the change is blocked, if any
  */
-function applyBudgetChanges(base, after, newLines, origin, warnings) {
+function applyBudgetChanges(base, after, proposedLines, origin, warnings) {
   const total = after.brief.budget;
-  const money = (amount) => formatMoney(amount, after.brief.currency);
-
-  if (!Array.isArray(newLines) || !newLines.length) {
-    if (total === base.brief.budget) return null;
-    const fit = fitToTotal(
-      after.budget.map((line) => line.amount),
-      after.budget.map((line) => line.committed || 0),
-      total,
-    );
-    if (!fit.ok) return `Committed spend is more than the new budget of ${money(total)}.`;
-    after.budget.forEach((line, i) => {
-      line.amount = fit.amounts[i];
-    });
-    warnings.push("Every category was scaled in proportion; committed spend is protected.");
-    return null;
+  const money = moneyIn(after.brief.currency);
+  const newLines = objects(proposedLines);
+  if (!newLines.length) {
+    return total === base.brief.budget ? null : rescaleBudget(after, warnings);
   }
 
   const { lines, lockedIndexes } = mergeBudgetLines(after.budget, newLines, warnings);
@@ -203,11 +273,7 @@ function applyBudgetChanges(base, after, newLines, origin, warnings) {
   // proportion.
   const proposedSum = sum(lines.map((line) => line.amount));
   const gap = total - proposedSum;
-  const contingencyIndex = lines.findIndex((line) => isContingency(line.category));
-  const contingency = lines[contingencyIndex];
-  if (gap && contingency && contingency.amount + gap >= (contingency.committed || 0)) {
-    contingency.amount += gap;
-  }
+  const hasContingency = absorbInContingency(lines, gap);
 
   const fit = fitToTotal(
     lines.map((line) => line.amount),
@@ -227,14 +293,11 @@ function applyBudgetChanges(base, after, newLines, origin, warnings) {
   });
   after.budget = lines;
 
-  if (proposedSum !== total && origin === "ai") {
-    const where =
-      contingencyIndex >= 0 && Math.abs(gap) && lines[contingencyIndex]
-        ? "in Contingency"
-        : "across categories in proportion";
+  if (gap && origin === "ai") {
+    const where = hasContingency ? "in Contingency" : "across categories in proportion";
     warnings.push(
       `Claude's amounts added up to ${money(proposedSum)}, not ${money(total)}. ` +
-        `Marigold corrected the difference of ${money(Math.abs(total - proposedSum))} ${where} ` +
+        `Marigold corrected the difference of ${money(Math.abs(gap))} ${where} ` +
         "so the total is exact.",
     );
   }
@@ -242,13 +305,59 @@ function applyBudgetChanges(base, after, newLines, origin, warnings) {
 }
 
 /**
+ * Scales every line to a new total, never below committed spend.
+ * @param {CorePlan} after mutated
+ * @param {string[]} warnings
+ * @returns {string|null} a reason the change is blocked, if any
+ */
+function rescaleBudget(after, warnings) {
+  const total = after.brief.budget;
+  const fit = fitToTotal(
+    after.budget.map((line) => line.amount),
+    after.budget.map((line) => line.committed || 0),
+    total,
+  );
+  if (!fit.ok) {
+    return `Committed spend is more than the new budget of ${formatMoney(total, after.brief.currency)}.`;
+  }
+  after.budget.forEach((line, i) => {
+    line.amount = fit.amounts[i];
+  });
+  warnings.push("Every category was scaled in proportion; committed spend is protected.");
+  return null;
+}
+
+/**
+ * Adds a gap between the proposed lines and the total to the contingency line, unless that would
+ * take it below its committed spend.
+ * @param {BudgetLine[]} lines mutated
+ * @param {number} gap total minus the sum of the lines
+ * @returns {boolean} true when there is a contingency line
+ */
+function absorbInContingency(lines, gap) {
+  const contingency = lines.find((line) => isContingency(line.category));
+  if (gap && contingency && contingency.amount + gap >= (contingency.committed || 0)) {
+    contingency.amount += gap;
+  }
+  return !!contingency;
+}
+
+/**
  * Matches proposed categories to existing lines (exact name first, then partial), keeps any
  * dropped line that has committed spend, and records which lines are locked.
+ * @param {BudgetLine[]} existing
+ * @param {Raw[]} proposed
+ * @param {string[]} warnings
+ * @returns {{lines: BudgetLine[], lockedIndexes: number[]}}
  */
 function mergeBudgetLines(existing, proposed, warnings) {
+  /** @type {Set<string>} */
   const used = new Set();
+  /** @type {BudgetLine[]} */
   const lines = [];
+  /** @type {number[]} */
   const lockedIndexes = [];
+  /** @param {BudgetLine} line */
   const unused = (line) => !used.has(line.id);
 
   for (const entry of proposed) {
@@ -286,16 +395,23 @@ function mergeBudgetLines(existing, proposed, warnings) {
   return { lines, lockedIndexes };
 }
 
+/**
+ * @param {CorePlan} after
+ * @param {unknown} newTasks
+ * @param {number|null} daysLeft
+ * @param {ItemOrigin} origin
+ * @param {string[]} warnings
+ */
 function addTasks(after, newTasks, daysLeft, origin, warnings) {
   let clamped = false;
-  for (const task of Array.isArray(newTasks) ? newTasks : []) {
+  for (const task of objects(newTasks)) {
     const title = clip(task.title, 160);
     if (!title) continue;
     if (after.tasks.some((existing) => normalizeName(existing.title) === normalizeName(title))) {
       warnings.push(`Skipped duplicate task “${title}”.`);
       continue;
     }
-    let offset = isNumeric(task.daysBefore) ? Math.max(0, Math.round(+task.daysBefore)) : 7;
+    let offset = isNumeric(task.daysBefore) ? Math.max(0, Math.round(Number(task.daysBefore))) : 7;
     if (daysLeft != null && daysLeft >= 0 && offset > daysLeft) {
       offset = daysLeft;
       clamped = true;
@@ -307,7 +423,7 @@ function addTasks(after, newTasks, daysLeft, origin, warnings) {
       offset,
       fixedOffset: true,
       fixedDate: "",
-      priority: PRIORITIES.includes(task.priority) ? task.priority : "medium",
+      priority: oneOf(task.priority, PRIORITIES, "medium"),
       deps: [],
       done: false,
       origin,
@@ -316,7 +432,12 @@ function addTasks(after, newTasks, daysLeft, origin, warnings) {
   if (clamped) warnings.push("Some new tasks were moved so they aren't dated in the past.");
 }
 
-/** Removes pending tasks by id (completed tasks are never removed) and unlinks dependents. */
+/**
+ * Removes pending tasks by id (completed tasks are never removed) and unlinks dependents.
+ * @param {CorePlan} after
+ * @param {unknown} ids
+ * @param {string[]} warnings
+ */
 function removeTasks(after, ids, warnings) {
   const remove = new Set(Array.isArray(ids) ? ids.map(String) : []);
   if (!remove.size) return;
@@ -330,9 +451,16 @@ function removeTasks(after, ids, warnings) {
   });
 }
 
-/** Adds vendors; an existing vendor with a similar category gets the new checklist items instead. */
+/**
+ * Adds vendors; an existing vendor with a similar category gets the new checklist items instead.
+ * @param {CorePlan} after
+ * @param {unknown} newVendors
+ * @param {number|null} daysLeft
+ * @param {ItemOrigin} origin
+ * @param {string[]} warnings
+ */
 function addVendors(after, newVendors, daysLeft, origin, warnings) {
-  for (const spec of Array.isArray(newVendors) ? newVendors : []) {
+  for (const spec of objects(newVendors)) {
     const category = clip(spec.category, 60);
     if (!category) continue;
     const key = normalizeName(category);
@@ -342,7 +470,7 @@ function addVendors(after, newVendors, daysLeft, origin, warnings) {
     });
     if (existing) {
       const knownItems = new Set(existing.checklist.map((item) => normalizeName(item.text)));
-      const additions = (spec.checklist || [])
+      const additions = (Array.isArray(spec.checklist) ? spec.checklist : [])
         .map((text) => clip(text, 160))
         .filter((text) => text && !knownItems.has(normalizeName(text)));
       additions.forEach((text) => existing.checklist.push({ id: uid(), text, done: false }));
@@ -351,15 +479,26 @@ function addVendors(after, newVendors, daysLeft, origin, warnings) {
         : "";
       warnings.push(`${existing.category} already exists${added}.`);
     } else {
-      const bookBy =
-        daysLeft != null && daysLeft >= 0
-          ? Math.min(+spec.bookByDaysBefore || 0, daysLeft)
-          : spec.bookByDaysBefore;
-      after.vendors.push(newVendor({ ...spec, bookByDaysBefore: bookBy }, after.budget, origin));
+      const lead = Number(spec.bookByDaysBefore) || 0;
+      const bookBy = daysLeft != null && daysLeft >= 0 ? Math.min(lead, daysLeft) : lead;
+      const vendorSpec = {
+        category,
+        critical: !!spec.critical,
+        budgetCategory: clip(spec.budgetCategory, 60),
+        bookByDaysBefore: bookBy,
+        checklist: clipEach(spec.checklist, 160),
+        questions: clipEach(spec.questions, 200),
+      };
+      after.vendors.push(newVendor(vendorSpec, after.budget, origin));
     }
   }
 }
 
+/**
+ * @param {CorePlan} after
+ * @param {unknown} newIdeas
+ * @param {ItemOrigin} origin
+ */
 function addIdeas(after, newIdeas, origin) {
   for (const raw of Array.isArray(newIdeas) ? newIdeas : []) {
     const idea = validIdea(raw, [], "idea");
@@ -371,99 +510,14 @@ function addIdeas(after, newIdeas, origin) {
   }
 }
 
-/** Points vendors whose budget line was removed at the closest remaining line. */
+/**
+ * Points vendors whose budget line was removed at the closest remaining line.
+ * @param {CorePlan} after
+ */
 function relinkVendors(after) {
   for (const vendor of after.vendors) {
     if (vendor.lineId && !after.budget.some((line) => line.id === vendor.lineId)) {
       vendor.lineId = matchLine(vendor.category, after.budget);
     }
   }
-}
-
-/**
- * Brief fields shown in a diff: [label, formatter].
- * @param {string} currency
- */
-const briefFieldLabels = (currency) => ({
-  budget: ["Total budget", (v) => formatMoney(v, currency)],
-  guests: ["Guests", (v) => v],
-  date: ["Event date", (v) => (v ? formatDate(parseIsoDate(v)) : "none")],
-  venueCapacity: ["Venue capacity", (v) => v || "not set"],
-  style: ["Theme", (v) => v || "—"],
-  notes: ["Priorities", (v) => v || "—"],
-  name: ["Name", (v) => v],
-  city: ["City", (v) => v],
-  time: ["Start time", (v) => v || "—"],
-  currency: ["Currency", (v) => v],
-});
-
-/**
- * Describes what changes between two versions of a plan, for the approval preview.
- * @param {import("./model.js").Plan} before
- * @param {import("./model.js").Plan} after
- * @returns {object} brief rows, budget rows, added/removed items, timeline shift and `empty`
- */
-export function diffPlans(before, after) {
-  const addedTo = (list, other) => list.filter((item) => !other.some((x) => x.id === item.id));
-  const diff = {
-    brief: [],
-    budget: [],
-    budgetChanged: false,
-    tasksAdded: addedTo(after.tasks, before.tasks),
-    tasksRemoved: addedTo(before.tasks, after.tasks),
-    vendorsAdded: addedTo(after.vendors, before.vendors),
-    vendorsChanged: after.vendors.filter((vendor) => {
-      const old = before.vendors.find((x) => x.id === vendor.id);
-      return old && old.checklist.length !== vendor.checklist.length;
-    }),
-    ideasAdded: addedTo(after.ideas, before.ideas),
-    timeline: null,
-  };
-
-  for (const [field, [label, show]] of Object.entries(briefFieldLabels(after.brief.currency))) {
-    if ((before.brief[field] ?? "") !== (after.brief[field] ?? "")) {
-      diff.brief.push({ label, from: show(before.brief[field]), to: show(after.brief[field]) });
-    }
-  }
-
-  const lineIds = [...new Set([...before.budget, ...after.budget].map((line) => line.id))];
-  diff.budget = lineIds.map((id) => {
-    const old = before.budget.find((line) => line.id === id);
-    const now = after.budget.find((line) => line.id === id);
-    return {
-      category: (now || old).category,
-      before: old ? old.amount : 0,
-      after: now ? now.amount : 0,
-      committed: (now || old).committed || 0,
-      added: !old,
-      removed: !now,
-    };
-  });
-  diff.budgetChanged = diff.budget.some(
-    (row) => row.before !== row.after || row.added || row.removed,
-  );
-  diff.totalBefore = sum(before.budget.map((line) => line.amount));
-  diff.totalAfter = sum(after.budget.map((line) => line.amount));
-
-  if (before.brief.date !== after.brief.date) {
-    const oldDate = parseIsoDate(before.brief.date);
-    const newDate = parseIsoDate(after.brief.date);
-    const afterAnalysis = analyze(after);
-    diff.timeline = {
-      shift: oldDate && newDate ? daysBetween(oldDate, newDate) : null,
-      overdueBefore: analyze(before).overdue.length,
-      overdueAfter: afterAnalysis.overdue.length,
-      compressed: afterAnalysis.sc.compressed,
-    };
-  }
-
-  diff.empty =
-    !diff.brief.length &&
-    !diff.budgetChanged &&
-    !diff.tasksAdded.length &&
-    !diff.tasksRemoved.length &&
-    !diff.vendorsAdded.length &&
-    !diff.vendorsChanged.length &&
-    !diff.ideasAdded.length;
-  return diff;
 }

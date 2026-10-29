@@ -29,15 +29,15 @@ test("budget risks: over-committed lines, missing contingency and quotes above a
   assert.ok(found.includes(`${plan.budget[0].category} is over plan`));
   assert.ok(found.includes("No contingency reserve"));
   assert.ok(found.includes(`${venue.category} quote is above its allocation`));
-  const health = analyze(plan).health.comps[0];
-  assert.ok(health.got < 20 && health.ded.every((d) => d.reason && d.action));
+  const health = analyze(plan).health.components[0];
+  assert.ok(health.score < 20 && health.deductions.every((d) => d.reason && d.action));
 });
 
 test("timeline risks: no date, a passed date and a very short runway", () => {
   assert.ok(titles(weddingPlan({ date: "" })).includes("No event date"));
   const passed = weddingPlan({ date: toIsoDate(addDays(today(), -2)) });
   assert.ok(titles(passed).includes("Event date has passed"));
-  assert.equal(analyze(passed).health.comps[1].got, 0);
+  assert.equal(analyze(passed).health.components[1].score, 0);
   const soon = weddingPlan({}, 10);
   assert.ok(titles(soon).includes("Very short runway"));
   assert.ok(titles(soon).some((title) => /overdue task/.test(title)));

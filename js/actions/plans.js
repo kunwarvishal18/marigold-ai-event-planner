@@ -8,13 +8,16 @@ import { SCENARIOS, scenarioBrief } from "../core/scenarios.js";
 import { templateData } from "../core/templates.js";
 import { uid } from "../core/util.js";
 import { STORAGE_KEYS, localStore } from "../services/local-store.js";
-import { state } from "../services/state.js";
+import { requirePlan, state } from "../services/state.js";
 import { sanePlan } from "../core/plan-sanitizer.js";
 import { deleteStoredPlan, savePlan } from "../services/storage.js";
 import { view } from "../services/view.js";
 import { proposeChange, showProposal } from "./history.js";
 
-/** The blank brief shown for a new event. */
+/**
+ * The blank brief shown for a new event.
+ * @type {Readonly<import("../services/view.js").BriefDraft>}
+ */
 export const EMPTY_BRIEF = Object.freeze({
   type: "Wedding",
   name: "",
@@ -24,7 +27,10 @@ export const EMPTY_BRIEF = Object.freeze({
   currency: "INR",
 });
 
-/** Brief fields compared when reviewing edits to an open plan. */
+/**
+ * Brief fields compared when reviewing edits to an open plan.
+ * @type {Array<keyof import("../core/model.js").Brief>}
+ */
 const EDITABLE_FIELDS = [
   "name",
   "date",
@@ -43,7 +49,7 @@ const EDITABLE_FIELDS = [
  * Adds a change-log entry to a plan that isn't open yet.
  * @param {import("../core/model.js").Plan} plan
  * @param {string} text
- * @param {string} origin
+ * @param {import("../core/model.js").ItemOrigin} origin
  */
 export function logEntryFor(plan, text, origin) {
   plan.log.unshift({ text, origin, at: Date.now() });
@@ -63,9 +69,9 @@ export function openPlan(plan) {
   state.plan = clean;
   state.proposal = null;
   state.mode = "edit";
-  state.openV.clear();
-  view.fillForm(state.plan.brief);
-  localStore.set(STORAGE_KEYS.lastPlanId, state.plan.id);
+  state.expandedVendors.clear();
+  view.fillForm(clean.brief);
+  localStore.set(STORAGE_KEYS.lastPlanId, clean.id);
   view.render();
   return true;
 }
@@ -98,7 +104,8 @@ export function createTemplate(brief) {
  * @param {import("../core/model.js").Brief} brief already validated
  */
 export function reviewDetails(brief) {
-  const current = state.plan.brief;
+  const current = requirePlan().brief;
+  /** @type {Record<string, unknown>} */
   const changes = {};
   for (const field of EDITABLE_FIELDS) {
     if ((brief[field] ?? "") !== (current[field] ?? "")) changes[field] = brief[field];
@@ -158,52 +165,72 @@ export function openSample() {
   plan.summary =
     "Example data built from Marigold's wedding template so you can explore the app. It isn't " +
     "AI generated. Generate with AI in Event details to get a plan written for this brief.";
-  plan.budget.find((line) => /venue/i.test(line.category)).committed = 450000;
-  plan.budget.find((line) => /photo/i.test(line.category)).committed = 230000;
+  addSampleBookings(plan);
+  tickEarlyHighPriorityTasks(plan);
+  logEntryFor(plan, "Opened the sample wedding (template data)", "template");
+  openPlan(plan);
+  savePlan();
+}
 
-  const venue = plan.vendors.find((vendor) => /venue/i.test(vendor.category));
-  Object.assign(venue, {
-    status: "Booked",
-    payment: "Deposit paid",
-    name: "Example venue (placeholder)",
-    quote: 450000,
-    arrival: "08:00",
-  });
-  const photographer = plan.vendors.find((vendor) => /photo/i.test(vendor.category));
-  Object.assign(photographer, {
-    status: "Negotiating",
-    quote: 230000,
-    options: [
-      {
-        id: uid(),
-        name: "Option A (placeholder)",
-        contact: "",
-        quote: 230000,
-        notes: "Two shooters, drone",
-      },
-      {
-        id: uid(),
-        name: "Option B (placeholder)",
-        contact: "",
-        quote: 185000,
-        notes: "One shooter, 8 weeks delivery",
-      },
-    ],
-  });
+/**
+ * The sample's progress: a booked venue and a photographer being compared, with committed spend.
+ * The wedding template always has these lines and vendors; the guards only satisfy the types.
+ * @param {import("../core/model.js").Plan} plan mutated
+ */
+function addSampleBookings(plan) {
+  const lineFor = (/** @type {RegExp} */ pattern) =>
+    plan.budget.find((line) => pattern.test(line.category));
+  const vendorFor = (/** @type {RegExp} */ pattern) =>
+    plan.vendors.find((vendor) => pattern.test(vendor.category));
+  const venueLine = lineFor(/venue/i);
+  const photoLine = lineFor(/photo/i);
+  if (venueLine) venueLine.committed = 450000;
+  if (photoLine) photoLine.committed = 230000;
 
-  // Tick off the high-priority tasks that were due well before today.
+  const venue = vendorFor(/venue/i);
+  if (venue) {
+    Object.assign(venue, {
+      status: "Booked",
+      payment: "Deposit paid",
+      name: "Example venue (placeholder)",
+      quote: 450000,
+      arrival: "08:00",
+    });
+  }
+  const photographer = vendorFor(/photo/i);
+  if (photographer) {
+    Object.assign(photographer, {
+      status: "Negotiating",
+      quote: 230000,
+      options: [
+        {
+          id: uid(),
+          name: "Option A (placeholder)",
+          contact: "",
+          quote: 230000,
+          notes: "Two shooters, drone",
+        },
+        {
+          id: uid(),
+          name: "Option B (placeholder)",
+          contact: "",
+          quote: 185000,
+          notes: "One shooter, 8 weeks delivery",
+        },
+      ],
+    });
+  }
+}
+
+/**
+ * Ticks off the high-priority tasks that were due well before today.
+ * @param {import("../core/model.js").Plan} plan mutated
+ */
+function tickEarlyHighPriorityTasks(plan) {
   const sched = schedule(plan);
   const cutoff = addDays(today(), -10);
   for (const task of plan.tasks) {
-    if (sched.due[task.id] && sched.due[task.id] < cutoff && task.priority === "high") {
-      task.done = true;
-    }
+    const due = sched.due[task.id];
+    if (due && due < cutoff && task.priority === "high") task.done = true;
   }
-  plan.log.unshift({
-    text: "Opened the sample wedding (template data)",
-    origin: "template",
-    at: Date.now(),
-  });
-  openPlan(plan);
-  savePlan();
 }

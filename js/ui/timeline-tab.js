@@ -1,24 +1,45 @@
 /**
  * @file Timeline tab: tasks grouped by phase in due-date order, filters, and "Add a task".
  */
-import { commit } from "../actions/history.js";
+import { commit, commitQuietly } from "../actions/history.js";
+import { PRIORITIES, isOneOf, oneOf } from "../core/constants.js";
 import { daysBetween, parseIsoDate } from "../core/dates.js";
 import { escapeHtml, formatShortDate } from "../core/format.js";
 import { analyze } from "../core/risks.js";
 import { clip, uid } from "../core/util.js";
-import { state } from "../services/state.js";
-import { $, attrIf, onEach, onSubmit, setHtml, showInlineError } from "./dom.js";
+import { requirePlan, state } from "../services/state.js";
+import { $, attrIf, field, isChecked, onEach, onSubmit, setHtml, showInlineError } from "./dom.js";
 
+/** @typedef {import("../core/model.js").Plan} Plan */
+/** @typedef {import("../core/model.js").Task} Task */
+/** @typedef {import("../core/scheduler.js").Schedule} Schedule */
+/** @typedef {{task: Task, due: Date|null}} TaskRow */
+/** @typedef {(id: string) => string|undefined} TitleOf */
+/** @typedef {import("../services/state.js").AppState["filter"]} Filter */
+
+/** @type {Array<[Filter, string]>} */
 const FILTERS = [
   ["all", "All"],
   ["pending", "Pending"],
   ["overdue", "Overdue"],
   ["high", "High priority"],
 ];
+const FILTER_KEYS = FILTERS.map(([key]) => key);
 
+/** @type {Readonly<Record<string, string>>} */
+const ORIGIN_LABELS = { ai: "AI", you: "Added by you" };
+
+/**
+ * @param {Task} task
+ * @param {Date|null} due
+ * @param {Schedule} sched
+ */
 const isOverdue = (task, due, sched) => !task.done && !!due && due < sched.today;
 
-/** Which rows a filter keeps. */
+/**
+ * Which rows a filter keeps.
+ * @type {Record<Filter, (row: TaskRow, sched: Schedule) => boolean>}
+ */
 const FILTER_TESTS = {
   all: () => true,
   pending: ({ task }) => !task.done,
@@ -26,8 +47,13 @@ const FILTER_TESTS = {
   high: ({ task }) => task.priority === "high",
 };
 
-/** Consecutive rows with the same phase form one group. */
+/**
+ * Consecutive rows with the same phase form one group.
+ * @param {TaskRow[]} rows
+ * @returns {Array<{name: string, rows: TaskRow[]}>}
+ */
 function groupByPhase(rows) {
+  /** @type {Array<{name: string, rows: TaskRow[]}>} */
   const phases = [];
   for (const row of rows) {
     const last = phases[phases.length - 1];
@@ -37,8 +63,12 @@ function groupByPhase(rows) {
   return phases;
 }
 
+/**
+ * @param {Schedule} sched
+ * @returns {string}
+ */
 function scheduleNotice(sched) {
-  if (!sched.ev) {
+  if (!sched.eventDate || sched.daysLeft == null) {
     return '<div class="callout warn">No event date yet, so tasks have no calendar dates. Add one in Event details.</div>';
   }
   if (sched.daysLeft < 0) {
@@ -50,36 +80,53 @@ function scheduleNotice(sched) {
   return "";
 }
 
+/**
+ * @param {TaskRow} row
+ * @param {Schedule} sched
+ * @param {TitleOf} titleOf
+ * @returns {string}
+ */
 function taskRow({ task, due }, sched, titleOf) {
-  const overdue = isOverdue(task, due, sched);
   const after = task.deps.length
     ? `<span>After: ${task.deps.map((id) => escapeHtml(titleOf(id))).join(", ")}</span>`
     : "";
-  let origin = "";
-  if (task.origin === "ai") origin = "<span>AI</span>";
-  else if (task.origin === "you") origin = "<span>Added by you</span>";
+  const origin = Object.hasOwn(ORIGIN_LABELS, task.origin)
+    ? `<span>${ORIGIN_LABELS[task.origin]}</span>`
+    : "";
   const remove =
     task.origin === "you" && !task.done
       ? `<button type="button" class="linkbtn" data-deltask="${escapeHtml(task.id)}">Remove</button>`
       : "";
-  const dueText = due
-    ? `<span class="${overdue ? "overdue" : ""}">${overdue ? "Overdue · " : ""}${formatShortDate(due)}</span>`
-    : '<span class="note">No date</span>';
-  let lead = "";
-  if (due && sched.ev) {
-    const daysBefore = daysBetween(due, sched.ev);
-    lead = `<div class="note">${daysBefore === 0 ? "Event day" : `${daysBefore}d before`}</div>`;
-  }
   return `<div class="task ${task.done ? "done" : ""}">
     <input type="checkbox" id="tk-${escapeHtml(task.id)}" data-task="${escapeHtml(task.id)}" ${attrIf(task.done, "checked")}>
     <div>
       <label for="tk-${escapeHtml(task.id)}" class="t-title plain-label">${escapeHtml(task.title)}</label>
       <div class="meta"><span class="pri ${escapeHtml(task.priority)}">${escapeHtml(task.priority)}</span>${after}${origin}${remove}</div>
     </div>
-    <div class="due">${dueText}${lead}</div>
+    <div class="due">${dueCell(task, due, sched)}</div>
   </div>`;
 }
 
+/**
+ * A task's due date (flagged when overdue) and how long before the event it is.
+ * @param {Task} task
+ * @param {Date|null} due
+ * @param {Schedule} sched
+ * @returns {string}
+ */
+function dueCell(task, due, sched) {
+  if (!due) return '<span class="note">No date</span>';
+  const overdue = isOverdue(task, due, sched);
+  const date = `<span class="${overdue ? "overdue" : ""}">${overdue ? "Overdue · " : ""}${formatShortDate(due)}</span>`;
+  if (!sched.eventDate) return date;
+  const daysBefore = daysBetween(due, sched.eventDate);
+  return `${date}<div class="note">${daysBefore === 0 ? "Event day" : `${daysBefore}d before`}</div>`;
+}
+
+/**
+ * @param {Plan} plan
+ * @returns {string}
+ */
 function addTaskForm(plan) {
   const options = plan.tasks
     .filter((task) => !task.done)
@@ -106,13 +153,14 @@ function addTaskForm(plan) {
  * @param {import("../core/risks.js").Analysis} analysis
  */
 export function renderTimeline(analysis) {
-  const plan = state.plan;
-  const sched = analysis.sc;
+  const plan = requirePlan();
+  const sched = analysis.schedule;
   const keep = FILTER_TESTS[state.filter] || FILTER_TESTS.all;
   const rows = plan.tasks
     .map((task) => ({ task, due: sched.due[task.id] || null }))
     .filter((row) => keep(row, sched))
-    .sort((a, b) => (a.due || 0) - (b.due || 0));
+    .sort((a, b) => (a.due?.getTime() ?? 0) - (b.due?.getTime() ?? 0));
+  /** @type {TitleOf} */
   const titleOf = (id) => plan.tasks.find((task) => task.id === id)?.title;
 
   const filterButtons = FILTERS.map(
@@ -141,13 +189,20 @@ export function renderTimeline(analysis) {
   bindTimeline(panel, sched, titleOf);
 }
 
+/**
+ * @param {HTMLElement} panel
+ * @param {Schedule} sched
+ * @param {TitleOf} titleOf
+ */
 function bindTimeline(panel, sched, titleOf) {
   onEach(
     "[data-filter]",
     "click",
     (button) => {
-      state.filter = button.dataset.filter;
-      renderTimeline(analyze(state.plan));
+      const filter = button.dataset.filter;
+      if (!isOneOf(filter, FILTER_KEYS)) return;
+      state.filter = filter;
+      renderTimeline(analyze(requirePlan()));
     },
     panel,
   );
@@ -155,13 +210,10 @@ function bindTimeline(panel, sched, titleOf) {
     "[data-task]",
     "change",
     (checkbox) =>
-      commit(
-        "Ticked task",
-        (plan) => {
-          plan.tasks.find((task) => task.id === checkbox.dataset.task).done = checkbox.checked;
-        },
-        { structural: false },
-      ),
+      commitQuietly("Ticked task", (plan) => {
+        const task = plan.tasks.find((item) => item.id === checkbox.dataset.task);
+        if (task) task.done = isChecked(checkbox);
+      }),
     panel,
   );
   onEach(
@@ -180,19 +232,26 @@ function bindTimeline(panel, sched, titleOf) {
   onSubmit($("#addTask"), () => addTask(sched, titleOf));
 }
 
+/**
+ * Adds the task described in the "Add a task" form, if it is valid.
+ * @param {Schedule} sched
+ * @param {TitleOf} titleOf
+ */
 function addTask(sched, titleOf) {
-  const title = clip($("#nt-title").value, 160);
-  const date = $("#nt-date").value;
-  const dependsOn = $("#nt-dep").value;
+  const title = clip(field("#nt-title").value, 160);
+  const date = field("#nt-date").value;
+  const dependsOn = field("#nt-dep").value;
+  const dueDate = date ? parseIsoDate(date) : null;
+  const dependencyDue = dependsOn ? sched.due[dependsOn] : null;
   if (!title) {
     showInlineError("nt-err", "Name the task.");
     return;
   }
-  if (date && sched.ev && parseIsoDate(date) > sched.ev) {
+  if (dueDate && sched.eventDate && dueDate > sched.eventDate) {
     showInlineError("nt-err", "Due date can't be after the event.");
     return;
   }
-  if (date && dependsOn && sched.due[dependsOn] && parseIsoDate(date) < sched.due[dependsOn]) {
+  if (dueDate && dependencyDue && dueDate < dependencyDue) {
     showInlineError(
       "nt-err",
       `That's before “${titleOf(dependsOn) || "the task it depends on"}” is due.`,
@@ -207,7 +266,7 @@ function addTask(sched, titleOf) {
       offset: 0,
       fixedOffset: !date,
       fixedDate: date || "",
-      priority: $("#nt-pri").value,
+      priority: oneOf(field("#nt-pri").value, PRIORITIES, "medium"),
       deps: dependsOn ? [dependsOn] : [],
       done: false,
       origin: "you",

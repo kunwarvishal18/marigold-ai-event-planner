@@ -14,9 +14,10 @@ export const STORAGE_KEYS = {
 
 export const localStore = {
   /**
-   * Reads and parses a JSON value.
+   * Reads and parses a JSON value. The result is whatever was stored, so callers check its shape.
    * @param {string} key
-   * @param {*} fallback returned when the key is missing, unreadable or storage is blocked
+   * @param {unknown} fallback returned when the key is missing, unreadable or storage is blocked
+   * @returns {unknown}
    */
   get(key, fallback) {
     try {
@@ -29,6 +30,8 @@ export const localStore = {
 
   /**
    * Stores a value as JSON.
+   * @param {string} key
+   * @param {unknown} value
    * @returns {boolean} false if it couldn't be saved
    */
   set(key, value) {
@@ -40,7 +43,11 @@ export const localStore = {
     }
   },
 
-  /** Raw text access, used to back up unreadable data instead of overwriting it. */
+  /**
+   * Raw text access, used to back up unreadable data instead of overwriting it.
+   * @param {string} key
+   * @returns {string|null}
+   */
   raw(key) {
     try {
       return localStorage.getItem(key);
@@ -49,7 +56,11 @@ export const localStore = {
     }
   },
 
-  /** @returns {boolean} false if it couldn't be saved */
+  /**
+   * @param {string} key
+   * @param {string} value
+   * @returns {boolean} false if it couldn't be saved
+   */
   setRaw(key, value) {
     try {
       localStorage.setItem(key, value);

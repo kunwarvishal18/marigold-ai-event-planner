@@ -4,13 +4,23 @@
  */
 import { applyProposal, rejectProposal } from "../actions/history.js";
 import { pctList } from "../core/budget.js";
-import { escapeHtml, formatMoney } from "../core/format.js";
+import { escapeHtml, moneyIn } from "../core/format.js";
 import { sum } from "../core/util.js";
 import { state } from "../services/state.js";
-import { $, attrIf, prefersReducedMotion, setHtml } from "./dom.js";
+import { $, attrIf, find, prefersReducedMotion, setHtml } from "./dom.js";
 
+/** @typedef {import("../core/proposal.js").Proposal} Proposal */
+/** @typedef {import("../core/plan-diff.js").PlanDiff} PlanDiff */
+/** @typedef {(amount: number) => string} Money */
+
+/** @param {number} change */
 const changeClass = (change) => (change > 0 ? "diff-up" : change < 0 ? "diff-down" : "");
 
+/**
+ * @param {Proposal} proposal
+ * @param {Money} money
+ * @returns {string}
+ */
 function budgetTable(proposal, money) {
   const { diff, after } = proposal;
   if (!diff.budgetChanged) return "";
@@ -52,6 +62,10 @@ function budgetTable(proposal, money) {
     <p class="note">After: ${allocatedPct}% allocated, ${money(diff.totalAfter)} of ${money(after.brief.budget)}.</p>`;
 }
 
+/**
+ * @param {PlanDiff["brief"]} rows
+ * @returns {string}
+ */
 function briefTable(rows) {
   if (!rows.length) return "";
   const body = rows
@@ -63,6 +77,10 @@ function briefTable(rows) {
   return `<div class="tablewrap"><table><thead><tr><th>Detail</th><th>Before</th><th>After</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+/**
+ * @param {PlanDiff["timeline"]} timeline
+ * @returns {string}
+ */
 function timelineNote(timeline) {
   if (!timeline) return "";
   const shift =
@@ -73,12 +91,22 @@ function timelineNote(timeline) {
   return `<div class="callout info">Timeline: every date ${shift}. Overdue tasks: ${timeline.overdueBefore} → ${timeline.overdueAfter}${compressed}</div>`;
 }
 
-/** A labelled bullet list; items are already-escaped markup. */
+/**
+ * A labelled bullet list; items are already-escaped markup.
+ * @param {string} label
+ * @param {string[]} items
+ * @returns {string}
+ */
 const itemList = (label, items) =>
   items.length
     ? `<div><span class="lbl">${label}</span><ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul></div>`
     : "";
 
+/**
+ * @param {Proposal} proposal
+ * @param {boolean} stale
+ * @returns {string}
+ */
 function callouts(proposal, stale) {
   const parts = [];
   if (proposal.blocked) {
@@ -107,12 +135,13 @@ export function renderProposal() {
     return;
   }
   const { diff } = proposal;
-  const money = (amount) => formatMoney(amount, proposal.after.brief.currency);
+  const money = moneyIn(proposal.after.brief.currency);
   const stale = proposal.status === "stale";
   const originBadge =
     proposal.origin === "ai"
       ? '<span class="badge ai">AI proposal</span>'
       : '<span class="badge rule">Rule-based proposal</span>';
+  /** @param {import("../core/model.js").Vendor} vendor */
   const vendorAdded = (vendor) =>
     `${escapeHtml(vendor.category)}${vendor.critical ? " (critical)" : ""}: ${vendor.checklist.length} checklist items`;
 
@@ -148,7 +177,7 @@ export function renderProposal() {
       )}
       ${itemList("Trade-offs", proposal.tradeoffs.map(escapeHtml))}
       <div class="btnrow">
-        <button class="btn" type="button" id="applyBtn" ${attrIf(proposal.blocked || stale, "disabled")}>Apply changes</button>
+        <button class="btn" type="button" id="applyBtn" ${attrIf(!!proposal.blocked || stale, "disabled")}>Apply changes</button>
         <button class="btn ghost" type="button" id="rejectBtn">Reject</button>
       </div>
     </section>`,
@@ -161,5 +190,5 @@ export function renderProposal() {
 export function revealProposal() {
   const host = $("#proposalHost");
   host.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
-  $("#propTitle")?.focus();
+  find("#propTitle")?.focus();
 }

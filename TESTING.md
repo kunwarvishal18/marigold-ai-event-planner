@@ -6,8 +6,9 @@ This file records what was actually run, the results, and what is **not** verifi
 
 ```bash
 npm install            # dev dependencies: eslint, playwright, axe-core
-npm test               # lint + build:check + test:coverage + test:e2e
+npm test               # lint + typecheck + build:check + test:coverage + test:e2e
 npm run lint           # ESLint (flat config in eslint.config.js, includes layer rules)
+npm run typecheck      # TypeScript 7 strict check of the JSDoc types (jsconfig.json); no build output
 npm run format:check   # Prettier
 npm run build:check    # fails if dist/ doesn't match the source (and on any import cycle)
 npm run test:unit      # node:test on core/, services/ and actions/ (no browser, no Claude)
@@ -21,21 +22,22 @@ node scripts/screenshots.mjs                         # regenerate README screens
 
 ## Executed results
 
-Run on 2026-10-29 in a Linux container: Node v22, Playwright 1.63.0 with Chromium, axe-core 4.12.1 (a newer, stricter release than the pinned 4.10.2), ESLint 10.1, Prettier 3.8.1. The container could not reach the npm registry or cdnjs, so `npm audit` and `scripts/verify-sri.mjs` were not run locally; CI runs both on every push. GitHub Actions uses ESLint 9 and axe-core 4.10.2 from the lockfile.
+Run on 2026-10-29 in a Linux container: Node v22, Playwright 1.63.0 with Chromium, axe-core 4.12.1 (a newer, stricter release than the pinned 4.10.2), ESLint 10.1, Prettier 3.8.1, TypeScript 7.0.2 (also checked with TypeScript 6.0.3). The container could not reach the npm registry or cdnjs, so `npm audit` and `scripts/verify-sri.mjs` were not run locally; CI runs both on every push. GitHub Actions uses ESLint 9 and axe-core 4.10.2 from the lockfile.
 
-Commands, in order: `npm run lint`, `npx prettier --check .`, `npm run build:check`, `npm run test:coverage`, `npm run test:mutation`, `MG_REPORT=e2e.json npm run test:e2e`, `npm run bench`.
+Commands, in order: `npm run lint`, `npx prettier --check .`, `tsc -p jsconfig.json`, `npm run build:check`, `npm run test:coverage`, `npm run test:mutation`, `MG_REPORT=e2e.json npm run test:e2e`, `npm run bench`.
 
-| Suite                                                 | Result                                              |
-| ----------------------------------------------------- | --------------------------------------------------- |
-| ESLint                                                | No problems                                         |
-| Prettier                                              | All files formatted                                 |
-| `build:check` (dist matches source, no import cycles) | Passed                                              |
-| Unit tests (`node:test`)                              | **111 / 111 passed** (0 failed, 0 skipped, 0 todo)  |
-| Unit test coverage (`core/`, `services/`, `actions/`) | **99.2% lines, 88.2% branches, 98.2% functions**    |
-| Mutation spot-check                                   | **8 / 8 mutants caught**                            |
-| Browser tests, modular app over HTTP                  | **111 / 111 passed** (0 skipped)                    |
-| Browser tests, single-file build over `file://`       | **111 / 111 passed** (0 skipped)                    |
-| Benchmark: task tick with 41 saved plans              | 18.7 ms median (was 28.2 ms before this change set) |
+| Suite                                                 | Result                                             |
+| ----------------------------------------------------- | -------------------------------------------------- |
+| ESLint (complexity ≤ 12, ≤ 60 lines per function)     | No problems                                        |
+| Prettier                                              | All files formatted                                |
+| TypeScript strict type check                          | **0 errors** (1,240 before typing the code)        |
+| `build:check` (dist matches source, no import cycles) | Passed                                             |
+| Unit tests (`node:test`)                              | **111 / 111 passed** (0 failed, 0 skipped, 0 todo) |
+| Unit test coverage (`core/`, `services/`, `actions/`) | **99.3% lines, 88.0% branches, 98.5% functions**   |
+| Mutation spot-check                                   | **8 / 8 mutants caught**                           |
+| Browser tests, modular app over HTTP                  | **111 / 111 passed** (0 skipped)                   |
+| Browser tests, single-file build over `file://`       | **111 / 111 passed** (0 skipped)                   |
+| Benchmark: task tick with 41 saved plans              | 18.4 ms median                                     |
 
 Earlier CI runs for reference: v3.3.0 (commit 1ec140c) https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40828856533 and the first run (commit 4f8873a) https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583.
 

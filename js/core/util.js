@@ -11,7 +11,8 @@ export const MAX_AMOUNT = 1e12;
  * @param {Array<number|string|null|undefined>} values
  * @returns {number}
  */
-export const sum = (values) => values.reduce((total, value) => total + (+value || 0), 0);
+export const sum = (values) =>
+  values.reduce((/** @type {number} */ total, value) => total + (Number(value) || 0), 0);
 
 /**
  * Collapses whitespace, trims and cuts a value to a maximum length.
@@ -55,7 +56,8 @@ export const deepClone = (value) => JSON.parse(JSON.stringify(value));
  * @param {unknown} value
  * @returns {boolean}
  */
-export const isNumeric = (value) => value !== null && value !== "" && Number.isFinite(+value);
+export const isNumeric = (value) =>
+  value !== null && value !== "" && Number.isFinite(Number(value));
 
 /**
  * Safe own-property check that also works on objects without a prototype.
@@ -81,7 +83,7 @@ export const isPlainObject = (value) =>
  */
 export function safeAmount(value) {
   if (!isNumeric(value)) return null;
-  const amount = Math.round(+value);
+  const amount = Math.round(Number(value));
   return amount >= 0 && amount <= MAX_AMOUNT ? amount : null;
 }
 

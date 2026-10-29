@@ -17,28 +17,46 @@ import {
   PAYMENT_STATES,
   PLAN_SOURCES,
   PRIORITIES,
-  SEVERITY_RANK,
+  SEVERITIES,
   TIME_PATTERN,
   VENDOR_STATUSES,
+  isOneOf,
+  PLAN_LIMITS,
+  oneOf,
 } from "./constants.js";
 import { parseIsoDate } from "./dates.js";
 import { PLAN_VERSION } from "./model.js";
 import { breakCycles } from "./scheduler.js";
 import { isNumeric, isPlainObject, safeAmount, uid } from "./util.js";
 
-const MAX_HISTORY = 10;
-const MAX_CHAT = 60;
-const MAX_LOG = 40;
+/** @typedef {Record<string, unknown>} Raw an untrusted object read from storage */
 
-/** A string cut to a maximum length; other values become their string form, null becomes "". */
+/**
+ * A string cut to a maximum length; other values become their string form, null becomes "".
+ * @param {unknown} value
+ * @param {number} maxLength
+ * @returns {string}
+ */
 const text = (value, maxLength) => (value == null ? "" : String(value).slice(0, maxLength));
-const oneOf = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+/**
+ * @param {unknown} value
+ * @returns {value is string}
+ */
 const validId = (value) => typeof value === "string" && ID_PATTERN.test(value);
+/** @type {(value: unknown) => string} */
 const idOrNew = (value) => (validId(value) ? value : uid());
-const isoOrEmpty = (value) => (parseIsoDate(value) ? value : "");
+/** @type {(value: unknown) => string} */
+const isoOrEmpty = (value) => (typeof value === "string" && parseIsoDate(value) ? value : "");
+/** @type {(value: unknown) => string} */
 const timeOrEmpty = (value) => (typeof value === "string" && TIME_PATTERN.test(value) ? value : "");
+/** @type {(value: unknown) => number|null} */
 const optionalAmount = (value) => (value == null ? null : safeAmount(value));
-const wholeOr = (value, fallback) => (Number.isInteger(value) ? value : fallback);
+/** @type {(value: unknown, fallback: number) => number} */
+const wholeOr = (value, fallback) =>
+  typeof value === "number" && Number.isInteger(value) ? value : fallback;
+/** @type {(value: unknown) => number} */
+const timestamp = (value) => Number(value) || 0;
+/** @type {(list: unknown) => Raw[]} */
 const objects = (list) => (Array.isArray(list) ? list.filter(isPlainObject) : []);
 
 /**
@@ -63,8 +81,8 @@ export function sanePlan(plan) {
     id: plan.id,
     source: oneOf(plan.source, PLAN_SOURCES, "template"),
     createdOn: isoOrEmpty(plan.createdOn),
-    createdAt: isNumeric(plan.createdAt) ? +plan.createdAt : Date.now(),
-    updatedAt: isNumeric(plan.updatedAt) ? +plan.updatedAt : Date.now(),
+    createdAt: isNumeric(plan.createdAt) ? Number(plan.createdAt) : Date.now(),
+    updatedAt: isNumeric(plan.updatedAt) ? Number(plan.updatedAt) : Date.now(),
     rev: wholeOr(plan.rev, 0),
     brief,
     summary: text(plan.summary, 700),
@@ -80,28 +98,32 @@ export function sanePlan(plan) {
       weather: objects(dayOf.weather).map(cleanChecklistItem),
     },
     history: objects(plan.history)
-      .filter((entry) => isPlainObject(entry.snap))
-      .slice(0, MAX_HISTORY)
-      .map((entry) => ({ title: text(entry.title, 120), at: +entry.at || 0, snap: entry.snap })),
+      .flatMap(({ title, at, snap }) =>
+        isPlainObject(snap) ? [{ title: text(title, 120), at: timestamp(at), snap }] : [],
+      )
+      .slice(0, PLAN_LIMITS.history),
     log: objects(plan.log)
-      .slice(0, MAX_LOG)
+      .slice(0, PLAN_LIMITS.log)
       .map((entry) => ({
         text: text(entry.text, 300),
         origin: oneOf(entry.origin, ITEM_ORIGINS, "you"),
-        at: +entry.at || 0,
+        at: timestamp(entry.at),
       })),
     chat: objects(plan.chat)
-      .filter((message) => CHAT_ROLES.includes(message.role))
-      .slice(-MAX_CHAT)
+      .filter((message) => isOneOf(message.role, CHAT_ROLES))
+      .slice(-PLAN_LIMITS.chat)
       .map((message) => ({
-        role: message.role,
+        role: oneOf(message.role, CHAT_ROLES, "note"),
         text: text(message.text, 2500),
-        at: +message.at || 0,
+        at: timestamp(message.at),
       })),
   };
 }
 
-/** @returns {import("./model.js").Brief|null} null when the total budget isn't usable */
+/**
+ * @param {Raw} brief
+ * @returns {import("./model.js").Brief|null} null when the total budget isn't usable
+ */
 function cleanBrief(brief) {
   const budget = safeAmount(brief.budget);
   if (!budget) return null;
@@ -111,7 +133,7 @@ function cleanBrief(brief) {
     name: text(brief.name, 90) || "Untitled event",
     date: isoOrEmpty(brief.date),
     time: timeOrEmpty(brief.time),
-    guests: Math.max(1, Math.min(MAX_GUESTS, Math.round(+brief.guests) || 1)),
+    guests: Math.max(1, Math.min(MAX_GUESTS, Math.round(Number(brief.guests)) || 1)),
     venueCapacity: capacity ? Math.min(capacity, MAX_GUESTS * 10) : null,
     budget,
     currency: oneOf(brief.currency, CURRENCIES, CURRENCIES[0]),
@@ -121,6 +143,10 @@ function cleanBrief(brief) {
   };
 }
 
+/**
+ * @param {Raw} line
+ * @returns {import("./model.js").BudgetLine}
+ */
 function cleanBudgetLine(line) {
   return {
     id: idOrNew(line.id),
@@ -131,10 +157,14 @@ function cleanBudgetLine(line) {
   };
 }
 
-/** Keeps every task; drops dependency links that are unknown, self-links or loops. */
+/**
+ * Keeps every task; drops dependency links that are unknown, self-links or loops.
+ * @param {Raw[]} tasks
+ * @returns {import("./model.js").Task[]}
+ */
 function cleanTasks(tasks) {
-  const keptIds = new Set(tasks.filter((task) => validId(task.id)).map((task) => task.id));
-  const withIds = tasks.map((task) => ({ task, id: validId(task.id) ? task.id : uid() }));
+  const keptIds = new Set(tasks.map((task) => task.id).filter(validId));
+  const withIds = tasks.map((task) => ({ task, id: idOrNew(task.id) }));
   const graph = withIds.map(({ task, id }) => ({
     key: id,
     dependsOn: [
@@ -148,7 +178,7 @@ function cleanTasks(tasks) {
     id,
     title: text(task.title, 160),
     phase: text(task.phase, 40) || "Planning",
-    offset: Math.max(0, Math.round(+task.offset) || 0),
+    offset: Math.max(0, Math.round(Number(task.offset)) || 0),
     fixedOffset: !!task.fixedOffset,
     fixedDate: isoOrEmpty(task.fixedDate),
     priority: oneOf(task.priority, PRIORITIES, "medium"),
@@ -158,14 +188,19 @@ function cleanTasks(tasks) {
   }));
 }
 
+/**
+ * @param {Raw} vendor
+ * @param {Set<string>} lineIds ids of the plan's budget lines
+ * @returns {import("./model.js").Vendor}
+ */
 function cleanVendor(vendor, lineIds) {
   return {
     id: idOrNew(vendor.id),
     category: text(vendor.category, 60) || "Vendor",
     critical: !!vendor.critical,
     origin: oneOf(vendor.origin, ITEM_ORIGINS, "template"),
-    lineId: lineIds.has(vendor.lineId) ? vendor.lineId : null,
-    bookBy: Math.max(0, Math.round(+vendor.bookBy) || 0),
+    lineId: validId(vendor.lineId) && lineIds.has(vendor.lineId) ? vendor.lineId : null,
+    bookBy: Math.max(0, Math.round(Number(vendor.bookBy)) || 0),
     dueFixed: isoOrEmpty(vendor.dueFixed),
     checklist: objects(vendor.checklist).map(cleanChecklistItem),
     questions: (Array.isArray(vendor.questions) ? vendor.questions : []).map((q) => text(q, 200)),
@@ -187,6 +222,10 @@ function cleanVendor(vendor, lineIds) {
   };
 }
 
+/**
+ * @param {Raw} idea
+ * @returns {import("./model.js").Idea}
+ */
 function cleanIdea(idea) {
   return {
     id: idOrNew(idea.id),
@@ -199,6 +238,10 @@ function cleanIdea(idea) {
   };
 }
 
+/**
+ * @param {Raw} row
+ * @returns {import("./model.js").RunOfShowRow}
+ */
 function cleanRunOfShowRow(row) {
   return {
     id: idOrNew(row.id),
@@ -208,10 +251,18 @@ function cleanRunOfShowRow(row) {
   };
 }
 
+/**
+ * @param {Raw} item
+ * @returns {import("./model.js").ChecklistItem}
+ */
 function cleanChecklistItem(item) {
   return { id: idOrNew(item.id), text: text(item.text, 160), done: !!item.done };
 }
 
+/**
+ * @param {Raw} contact
+ * @returns {import("./model.js").Contact}
+ */
 function cleanContact(contact) {
   return {
     id: idOrNew(contact.id),
@@ -221,18 +272,22 @@ function cleanContact(contact) {
   };
 }
 
-/** Stored AI risk reviews are re-checked like a fresh reply. */
+/**
+ * Stored AI risk reviews are re-checked like a fresh reply.
+ * @param {unknown} review
+ * @returns {import("./model.js").AiRiskReview|null}
+ */
 function cleanAiRisks(review) {
   if (!isPlainObject(review)) return null;
   const items = objects(review.items)
-    .filter((risk) => Object.hasOwn(SEVERITY_RANK, risk.sev) && text(risk.title, 100))
+    .filter((risk) => isOneOf(risk.sev, SEVERITIES) && text(risk.title, 100))
     .slice(0, 8)
     .map((risk) => ({
-      sev: risk.sev,
+      sev: oneOf(risk.sev, SEVERITIES, "low"),
       title: text(risk.title, 100),
       why: text(risk.why, 300),
       action: text(risk.action, 240),
-      source: "ai",
+      source: /** @type {const} */ ("ai"),
     }));
-  return { at: +review.at || 0, rev: wholeOr(review.rev, 0), items };
+  return { at: timestamp(review.at), rev: wholeOr(review.rev, 0), items };
 }

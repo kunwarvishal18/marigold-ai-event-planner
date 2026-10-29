@@ -45,8 +45,8 @@ beforeEach(() => {
     plan: weddingPlan(),
     proposal: null,
     busy: {},
-    seq: {},
-    ctl: {},
+    requestNumbers: {},
+    abortControllers: {},
     sample: null,
     ai: "off",
   });

@@ -5,12 +5,13 @@
 import { undo } from "../actions/history.js";
 import { newEvent, openSample } from "../actions/plans.js";
 import { escapeHtml } from "../core/format.js";
+import { isOneOf } from "../core/constants.js";
 import { SCENARIOS, scenarioBrief } from "../core/scenarios.js";
 import { isClaudeOn } from "../services/claude.js";
 import { STORAGE_KEYS, localStore } from "../services/local-store.js";
 import { state } from "../services/state.js";
 import { bindChat, clearChatInput } from "./chat-tab.js";
-import { $, $$, onEach, setHtml, showInlineError } from "./dom.js";
+import { $, $$, closestTo, onEach, setHtml, showInlineError } from "./dom.js";
 import { refreshCountdown } from "./eventday-tab.js";
 import {
   fillForm,
@@ -45,19 +46,26 @@ export const domView = {
   clearChatInput,
 };
 
-/** The tab reached from `current` by an arrow, Home or End key (wrapping around). */
+/**
+ * The tab reached from `current` by an arrow, Home or End key (wrapping around).
+ * @param {string} key
+ * @param {string} current
+ * @returns {string}
+ */
 function tabForKey(key, current) {
   if (key === "Home") return TABS[0];
   if (key === "End") return TABS[TABS.length - 1];
   const step = key === "ArrowRight" ? 1 : -1;
-  const index = (TABS.indexOf(current) + step + TABS.length) % TABS.length;
+  const index = (TABS.findIndex((tab) => tab === current) + step + TABS.length) % TABS.length;
   return TABS[index];
 }
 
 function bindBriefForm() {
   onEach("#types button", "click", (button) => {
-    state.type = button.dataset.type;
-    for (const other of $$("#types button")) other.setAttribute("aria-pressed", other === button);
+    state.type = button.dataset.type || state.type;
+    for (const other of $$("#types button")) {
+      other.setAttribute("aria-pressed", String(other === button));
+    }
   });
   $("#brief").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -76,11 +84,12 @@ function bindWelcome() {
     $("#scenarios"),
     SCENARIOS.map(
       (scenario, i) =>
-        `<button type="button" data-scen="${i}"><b>${escapeHtml(scenario.label)}</b><span>${escapeHtml(scenario.sub)}</span></button>`,
+        `<button type="button" data-scen="${i}"><b>${escapeHtml(scenario.label)}</b><span>${escapeHtml(scenario.summary)}</span></button>`,
     ).join(""),
   );
   onEach("[data-scen]", "click", (button) => {
-    const scenario = SCENARIOS[+button.dataset.scen];
+    const scenario = SCENARIOS[Number(button.dataset.scen)];
+    if (!scenario) return;
     fillForm(scenarioBrief(scenario));
     const next = isClaudeOn() ? "Press Generate plan with AI." : "Press Create template plan.";
     setFormHint(`Brief filled with the ${scenario.label} scenario. ${next}`);
@@ -91,10 +100,10 @@ function bindWelcome() {
 /** Tabs follow the WAI-ARIA tabs pattern: arrows, Home and End move focus and selection. */
 function bindTabs() {
   $("#tabs").addEventListener("click", (event) => {
-    const tab = event.target.closest("[role=tab]");
-    if (!tab) return;
-    localStore.set(STORAGE_KEYS.tab, tab.dataset.tab);
-    selectTab(tab.dataset.tab);
+    const name = closestTo(event, "[role=tab]")?.dataset.tab;
+    if (!name) return;
+    localStore.set(STORAGE_KEYS.tab, name);
+    selectTab(name);
   });
   $("#tabs").addEventListener("keydown", (event) => {
     if (!TAB_KEYS.includes(event.key)) return;
@@ -103,8 +112,8 @@ function bindTabs() {
   });
   // Links inside the plan ("Open budget", "Do next" items) jump to a tab.
   $("#planView").addEventListener("click", (event) => {
-    const link = event.target.closest("[data-goto]");
-    if (link) selectTab(link.dataset.goto, { focus: true });
+    const target = closestTo(event, "[data-goto]")?.dataset.goto;
+    if (target) selectTab(target, { focus: true });
   });
 }
 
@@ -122,5 +131,5 @@ export function bindPage() {
 /** @returns {string} the tab saved from the last visit, if it still exists */
 export function savedTab() {
   const tab = localStore.get(STORAGE_KEYS.tab, "overview");
-  return TABS.includes(tab) ? tab : "overview";
+  return isOneOf(tab, TABS) ? tab : "overview";
 }
