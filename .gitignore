@@ -16,3 +16,6 @@ Thumbs.db
 # Local secrets (Marigold needs none; never commit any)
 .env
 .env.*
+
+# Coverage output
+coverage/
