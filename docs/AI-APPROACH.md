@@ -21,15 +21,15 @@ Marigold combines generative AI with deterministic planning rules.
 
 ## What uses AI, and what does not
 
-| Capability | Implementation |
-| --- | --- |
-| Personalised event plan, ideas and contextual risk review | Claude in the Artifact runtime |
-| Conversational responses and proposed edits | Claude, followed by validation and a user-reviewed proposal |
-| Exact budget totals and committed-spend floors | Deterministic JavaScript |
-| Scheduling and dependency handling | Deterministic JavaScript |
-| Rule-based risk checks and health score | Deterministic JavaScript |
-| Apply, reject, undo and stale-proposal protection | Application logic |
-| Standalone mode without the Claude runtime | Clearly labelled templates and rule-based functionality |
+| Capability                                                | Implementation                                              |
+| --------------------------------------------------------- | ----------------------------------------------------------- |
+| Personalised event plan, ideas and contextual risk review | Claude in the Artifact runtime                              |
+| Conversational responses and proposed edits               | Claude, followed by validation and a user-reviewed proposal |
+| Exact budget totals and committed-spend floors            | Deterministic JavaScript                                    |
+| Scheduling and dependency handling                        | Deterministic JavaScript                                    |
+| Rule-based risk checks and health score                   | Deterministic JavaScript                                    |
+| Apply, reject, undo and stale-proposal protection         | Application logic                                           |
+| Standalone mode without the Claude runtime                | Clearly labelled templates and rule-based functionality     |
 
 The standalone build is useful as a fallback, but it should not be represented as a live Claude session when the Claude runtime is unavailable.
 
