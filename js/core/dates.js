@@ -13,7 +13,7 @@ const MAX_YEAR = 2200;
  * @param {Date|number|string} date
  * @returns {Date}
  */
-export function startOfDay(date) {
+function startOfDay(date) {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
   return result;

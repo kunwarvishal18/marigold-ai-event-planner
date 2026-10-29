@@ -11,7 +11,7 @@ import { schedule } from "./scheduler.js";
 import { isNumeric, sum } from "./util.js";
 
 /** Vendors each event type can't happen without: [label, category pattern]. */
-export const REQUIRED_VENDORS = {
+const REQUIRED_VENDORS = {
   Wedding: [
     ["venue", /venue|hall|banquet|palace|lawn|resort|haveli|garden/],
     ["caterer", /cater|food|chef|kitchen/],

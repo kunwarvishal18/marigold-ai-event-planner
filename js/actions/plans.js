@@ -9,7 +9,8 @@ import { templateData } from "../core/templates.js";
 import { uid } from "../core/util.js";
 import { STORAGE_KEYS, localStore } from "../services/local-store.js";
 import { state } from "../services/state.js";
-import { deleteStoredPlan, sanePlan, savePlan } from "../services/storage.js";
+import { sanePlan } from "../core/plan-sanitizer.js";
+import { deleteStoredPlan, savePlan } from "../services/storage.js";
 import { view } from "../services/view.js";
 import { proposeChange, showProposal } from "./history.js";
 

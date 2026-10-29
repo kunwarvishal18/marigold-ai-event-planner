@@ -4,7 +4,8 @@
 import { deletePlan, openPlan } from "../actions/plans.js";
 import { escapeHtml } from "../core/format.js";
 import { state } from "../services/state.js";
-import { allPlans, getPlan, hiddenCounts, sanePlan, storageState } from "../services/storage.js";
+import { sanePlan } from "../core/plan-sanitizer.js";
+import { getPlan, storageState, storedPlanSummary } from "../services/storage.js";
 import { $, attrIf, setHtml } from "./dom.js";
 
 /** How long a "Confirm delete" button stays armed. */
@@ -13,8 +14,7 @@ const CONFIRM_MS = 4000;
 const SOURCE_LABELS = { ai: "AI", example: "Example" };
 
 /** Explains any stored data that is kept but not shown, or why saving is paused. */
-function storageNotes() {
-  const hidden = hiddenCounts();
+function storageNotes(hidden) {
   const notes = [];
   if (storageState.corrupt) {
     notes.push(
@@ -43,28 +43,25 @@ function storageNotes() {
 }
 
 function savedItem(plan) {
-  const id = escapeHtml(plan.id);
+  const id = plan.id;
   const name = escapeHtml(plan.brief.name);
   const isOpen = state.plan && state.plan.id === plan.id;
   return `<div class="saved-item">
-    <button type="button" class="linkbtn" data-open="${id}" ${attrIf(isOpen, 'aria-current="true"')}>${name}</button>
+    <button type="button" class="linkbtn" data-open="${escapeHtml(id)}" ${attrIf(isOpen, 'aria-current="true"')}>${name}</button>
     <span class="btnrow">
       <small>${SOURCE_LABELS[plan.source] || "Template"}</small>
-      <button type="button" class="iconbtn" data-del="${id}" aria-label="Delete ${name}">Delete</button>
+      <button type="button" class="iconbtn" data-del="${escapeHtml(id)}" aria-label="Delete ${name}">Delete</button>
     </span>
   </div>`;
 }
 
 /** Re-renders the saved plans list, newest first. */
 export function renderSaved() {
-  const plans = Object.values(allPlans())
-    .map(sanePlan)
-    .filter(Boolean)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-  const body = plans.length
-    ? plans.map(savedItem).join("")
+  const summary = storedPlanSummary();
+  const body = summary.plans.length
+    ? summary.plans.map(savedItem).join("")
     : '<p class="hint">No saved plans yet. Plans save automatically once created.</p>';
-  setHtml($("#savedList"), storageNotes() + body);
+  setHtml($("#savedList"), storageNotes(summary) + body);
 }
 
 /** Wires opening and deleting (delete needs a second click within a few seconds). */

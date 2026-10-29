@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.4.0 (2026-10-29)
+
+Security, accessibility, testing and efficiency release. No features removed.
+
+### Security
+
+- **Fixed HTML injection through approved AI proposals.** A co-planner proposal could set the currency, start time or event type to arbitrary text, which was later rendered as HTML. These fields now accept only allow-listed values, and the money formatter never echoes an unknown currency code.
+- **Fixed HTML injection through stored data.** Ids, priorities, vendor statuses and payments, chat roles, AI risks and dates read from `localStorage` reached the page unchecked. A new `core/plan-sanitizer.js` rebuilds every loaded plan from allow-listed values, and the UI escapes every interpolated value as well.
+- **Undo snapshots are validated** before they are restored; an unreadable snapshot is discarded with a message.
+- **jsPDF 4.2.1** (was 2.5.1, which has published advisories including a critical one). The pinned file lives in `tests/fixtures/jspdf/`; jsPDF and 19 packages only it needed are gone from the dev dependencies.
+- CI now runs `npm audit --audit-level=high`. Added `SECURITY.md`.
+
+### Accessibility
+
+- **Keyboard focus is kept across re-renders** (WCAG 2.4.3). Previously, ticking a task, editing a vendor or applying a proposal sent focus to the page body.
+- The conversation is a `role="log"` region that only receives new messages, so screen readers no longer re-read the whole chat after each reply.
+
+### Efficiency
+
+- Cached `Intl` formatters and a parse cache for stored plans: a task tick with 41 saved plans went from 28.2 ms to 18.7 ms (median, `npm run bench`).
+
+### Code quality
+
+- Removed dead and duplicated code (`CSV_KINDS`, a second `plural`), and unexported 23 internal helpers. Selecting an unknown tab is ignored instead of throwing.
+
+### Tests
+
+- Unit tests 83 → 111; coverage 94.4/83.5/92.7% → 99.2/88.2/98.2% (lines/branches/functions); thresholds raised to 95/85/95.
+- Browser checks 172 → 222: timeline, vendor, event-day and ideas journeys, keyboard focus, chat log, and both injection paths.
+- `npm run test:mutation` breaks 8 safety-critical rules one at a time and fails unless the tests catch each (8/8); runs in CI.
+
 ## 3.3.0 (2026-10-29)
 
 Code quality, security and testing release. Behaviour is unchanged; all 172 browser tests pass on both builds.

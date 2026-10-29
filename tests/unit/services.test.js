@@ -154,3 +154,39 @@ test("a proposal made before the plan changed is marked stale and not applied", 
   assert.equal(state.proposal.status, "stale");
   assert.equal(state.plan.brief.guests, 200);
 });
+
+test("undo validates the stored snapshot and discards one that can't be used", () => {
+  state.plan.history = [{ title: "Tampered", at: 1, snap: { v: 99 } }];
+  const before = state.plan.brief.budget;
+  undo();
+  assert.equal(state.plan.history.length, 0, "the unusable snapshot is dropped");
+  assert.equal(state.plan.brief.budget, before, "the plan is unchanged");
+  assert.match(events.at(-1)[1], /couldn't be read/);
+
+  const snap = JSON.parse(JSON.stringify(state.plan));
+  delete snap.history;
+  snap.tasks[0].priority = "<img src=x>";
+  state.plan.history = [{ title: "Old", at: 1, snap }];
+  undo();
+  assert.equal(state.plan.tasks[0].priority, "medium", "restored data is sanitised too");
+});
+
+test("undo is refused when it would drop a line with recorded spend", () => {
+  state.proposal = proposeChange({
+    origin: "rule",
+    kind: "idea",
+    title: "Add a line",
+    changes: {
+      budget: [
+        ...state.plan.budget.map((line) => ({ category: line.category, amount: line.amount })),
+        { category: "Fireworks", amount: 1000, locked: true },
+      ],
+    },
+  });
+  applyProposal();
+  const fireworks = state.plan.budget.find((line) => line.category === "Fireworks");
+  fireworks.committed = 500;
+  undo();
+  assert.ok(state.plan.budget.some((line) => line.category === "Fireworks"));
+  assert.match(events.at(-1)[1], /Can't undo: you've recorded spend on “Fireworks”/);
+});

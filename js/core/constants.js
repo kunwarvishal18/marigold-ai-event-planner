@@ -24,6 +24,27 @@ export const PRIORITIES = ["high", "medium", "low"];
 /** Risk severities mapped to sort order (most severe first). */
 export const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
+/** Event types Marigold plans for (each has a template). */
+export const EVENT_TYPES = ["Wedding", "Birthday", "Community event"];
+
+/** Currencies offered in the brief form (ISO 4217 codes). */
+export const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD"];
+
+/** Who wrote a chat message. */
+export const CHAT_ROLES = ["user", "assistant", "note", "error"];
+
+/** Where a plan came from. */
+export const PLAN_SOURCES = ["ai", "template", "example", "legacy"];
+
+/** Where an item in a plan came from. */
+export const ITEM_ORIGINS = ["ai", "template", "you", "rule"];
+
+/** Ids of plans and of items inside them: short and safe in HTML attributes and selectors. */
+export const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** A 24-hour clock time, HH:MM. */
+export const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 /** Largest guest count a brief accepts. */
 export const MAX_GUESTS = 100_000;
 

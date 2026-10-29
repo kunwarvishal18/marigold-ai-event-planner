@@ -3,7 +3,14 @@
  * before/after diff the person approves. Pure functions; applying the result is done elsewhere.
  */
 import { fitToTotal } from "./budget.js";
-import { MAX_GUESTS, PRIORITIES, isContingency } from "./constants.js";
+import {
+  CURRENCIES,
+  EVENT_TYPES,
+  MAX_GUESTS,
+  PRIORITIES,
+  TIME_PATTERN,
+  isContingency,
+} from "./constants.js";
 import { daysBetween, parseIsoDate, today } from "./dates.js";
 import { formatDate, formatMoney } from "./format.js";
 import { matchLine, newVendor } from "./model.js";
@@ -21,8 +28,21 @@ import {
 } from "./util.js";
 
 /** Free-text brief fields a proposal may change, with their maximum lengths. */
-const TEXT_FIELDS = ["style", "notes", "name", "city", "time", "type", "currency"];
-const textLimit = (field) => (field === "notes" ? 600 : 120);
+const TEXT_LIMITS = { name: 90, city: 80, style: 120, notes: 600 };
+
+/**
+ * Brief fields that only accept known values. A proposal with anything else is ignored for that
+ * field (with a warning), so model output can never put arbitrary text where the app expects a
+ * code, a time or an event type.
+ */
+const CHECKED_FIELDS = {
+  type: { valid: (v) => EVENT_TYPES.includes(v), warning: "Ignored an unknown event type." },
+  currency: { valid: (v) => CURRENCIES.includes(v), warning: "Ignored an unsupported currency." },
+  time: {
+    valid: (v) => v === "" || TIME_PATTERN.test(v),
+    warning: "Ignored an invalid start time.",
+  },
+};
 
 /**
  * @typedef {object} ProposalSpec
@@ -106,8 +126,8 @@ export function makeProposal(
   };
 }
 
-/** @returns {string|null} a reason the change is blocked, if any */
-function applyBriefChanges(base, after, brief, warnings) {
+/** Budget, guests, date and venue capacity: numbers and dates are range-checked. */
+function applyNumericBriefChanges(after, brief, warnings) {
   if (brief.budget != null) {
     const budget = Math.round(+brief.budget);
     if (budget > 0 && budget <= MAX_AMOUNT) after.brief.budget = budget;
@@ -126,8 +146,18 @@ function applyBriefChanges(base, after, brief, warnings) {
     const capacity = Math.round(+brief.venueCapacity);
     after.brief.venueCapacity = brief.venueCapacity != null && capacity > 0 ? capacity : null;
   }
-  for (const field of TEXT_FIELDS) {
-    if (typeof brief[field] === "string") after.brief[field] = clip(brief[field], textLimit(field));
+}
+
+/** @returns {string|null} a reason the change is blocked, if any */
+function applyBriefChanges(base, after, brief, warnings) {
+  applyNumericBriefChanges(after, brief, warnings);
+  for (const [field, limit] of Object.entries(TEXT_LIMITS)) {
+    if (typeof brief[field] === "string") after.brief[field] = clip(brief[field], limit);
+  }
+  for (const [field, rule] of Object.entries(CHECKED_FIELDS)) {
+    if (brief[field] == null) continue;
+    if (rule.valid(brief[field])) after.brief[field] = brief[field];
+    else warnings.push(rule.warning);
   }
   if (after.brief.currency !== base.brief.currency) {
     warnings.push("Currency changed: amounts are relabelled, not converted.");

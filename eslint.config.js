@@ -43,7 +43,7 @@ const qualityRules = {
 };
 
 export default [
-  { ignores: ["dist/**", "node_modules/**", "docs/**", "coverage/**"] },
+  { ignores: ["dist/**", "node_modules/**", "docs/**", "coverage/**", "tests/fixtures/**"] },
   js.configs.recommended,
   {
     files: ["js/**/*.js"],
@@ -103,7 +103,10 @@ export default [
       globals: { ...globals.node, ...globals.browser, MarigoldTest: "readonly", axe: "readonly" },
     },
   },
-  // The screenshot script also runs callbacks inside the page.
-  { files: ["scripts/screenshots.mjs"], languageOptions: { globals: { ...globals.browser } } },
+  // The screenshot and benchmark scripts also run callbacks inside the page.
+  {
+    files: ["scripts/screenshots.mjs", "scripts/bench.mjs"],
+    languageOptions: { globals: { ...globals.browser } },
+  },
   { files: ["tests/e2e/mock-claude.js"], languageOptions: { sourceType: "script" } },
 ];

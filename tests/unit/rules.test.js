@@ -138,6 +138,39 @@ test("vendor CSV and PDF text cleaning", () => {
 test("money and dates format for display", () => {
   assert.equal(formatMoney(2500000, "INR"), "₹25,00,000");
   assert.equal(formatMoney(1234.6, "USD"), "$1,235");
-  assert.match(formatMoney(5, "NOTACODE"), /^NOTACODE 5$/);
+  assert.equal(formatMoney(5, "NOTACODE"), "NOT 5");
+  assert.equal(formatMoney(5, "<img src=x>"), "IMG 5", "unknown codes never echo markup");
   assert.equal(formatShortDate(null), "—");
+});
+
+test("generated run of show and lead times are normalised", () => {
+  const base = {
+    summary: "s",
+    budget: [
+      { category: "Venue", pct: 50 },
+      { category: "Food", pct: 30 },
+      { category: "Decor", pct: 10 },
+      { category: "Contingency", pct: 10 },
+    ],
+    tasks: Array.from({ length: 6 }, (_, i) => ({ key: `t${i}`, title: `T${i}`, daysBefore: 90 })),
+    vendors: ["A", "B", "C"].map((category) => ({ category, checklist: ["x"] })),
+    ideas: [1, 2, 3].map((n) => ({ title: `I${n}`, detail: "d" })),
+    runOfShow: [
+      { time: "9:05", item: "Setup" },
+      { time: "25 o'clock", item: "Bad" },
+      { time: "18:00", item: "" },
+    ],
+  };
+  const result = validateGen(base, 20);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.runOfShow, [{ time: "09:05", item: "Setup", owner: "" }]);
+  assert.ok(
+    result.value.tasks.every((task) => task.daysBefore === 20),
+    "lead times fit the runway",
+  );
+  const bad = validateGen(
+    { ...base, tasks: base.tasks.map((t) => ({ ...t, daysBefore: "soon" })) },
+    20,
+  );
+  assert.ok(bad.errors.includes("tasks[0].daysBefore must be an integer"));
 });

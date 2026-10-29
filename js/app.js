@@ -20,7 +20,8 @@ import { validateChat, validateGen } from "./core/validation.js";
 import { setConnection } from "./services/claude.js";
 import { STORAGE_KEYS, localStore } from "./services/local-store.js";
 import { state } from "./services/state.js";
-import { getPlan, migrateV1, sanePlan } from "./services/storage.js";
+import { sanePlan } from "./core/plan-sanitizer.js";
+import { getPlan, migrateV1 } from "./services/storage.js";
 import { connectView, view } from "./services/view.js";
 import { bindPage, domView, savedTab } from "./ui/controller.js";
 

@@ -32,12 +32,12 @@ function budgetRow(line, pct, money) {
     <td><b>${category}</b>${reserve}<div class="note">${escapeHtml(line.note)}</div></td>
     <td class="num">${pct.toFixed(1)}%</td>
     <td class="num">
-      <label class="sr" for="al-${line.id}">Allocation for ${category}</label>
-      <input class="amt" id="al-${line.id}" type="number" min="0" step="1" data-alloc="${line.id}" value="${line.amount}">
+      <label class="sr" for="al-${escapeHtml(line.id)}">Allocation for ${category}</label>
+      <input class="amt" id="al-${escapeHtml(line.id)}" type="number" min="0" step="1" data-alloc="${escapeHtml(line.id)}" value="${line.amount}">
     </td>
     <td class="num">
-      <label class="sr" for="cm-${line.id}">Committed spend for ${category}</label>
-      <input class="amt" id="cm-${line.id}" type="number" min="0" step="1" data-commit="${line.id}" value="${line.committed ?? ""}" placeholder="0">
+      <label class="sr" for="cm-${escapeHtml(line.id)}">Committed spend for ${category}</label>
+      <input class="amt" id="cm-${escapeHtml(line.id)}" type="number" min="0" step="1" data-commit="${escapeHtml(line.id)}" value="${line.committed ?? ""}" placeholder="0">
     </td>
     <td class="num ${over ? "neg" : ""}">${money(line.amount - committed)}</td>
     <td class="bar-cell"><div class="bar" title="${usedPct}% used"><i class="${over ? "over" : ""}" data-width="${barPct}"></i></div></td>

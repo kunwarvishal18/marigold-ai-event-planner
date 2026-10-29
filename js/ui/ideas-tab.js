@@ -51,16 +51,16 @@ function ideaCard(idea, plan) {
       : (idea.costLow ?? idea.costHigh ?? "");
   const budgetAction = isInBudget(plan, idea)
     ? '<span class="note">In budget</span>'
-    : `<label class="sr" for="ib-${idea.id}">Amount for ${escapeHtml(idea.title)}</label>` +
-      `<input id="ib-${idea.id}" type="number" min="1" step="1" value="${midpoint}" placeholder="Amount">` +
-      `<button type="button" class="btn ghost small" data-ibud="${idea.id}">Add to budget</button>`;
+    : `<label class="sr" for="ib-${escapeHtml(idea.id)}">Amount for ${escapeHtml(idea.title)}</label>` +
+      `<input id="ib-${escapeHtml(idea.id)}" type="number" min="1" step="1" value="${midpoint}" placeholder="Amount">` +
+      `<button type="button" class="btn ghost small" data-ibud="${escapeHtml(idea.id)}">Add to budget</button>`;
   return `<article class="idea">
     <div class="tag"><span>${escapeHtml(idea.tag)}</span>${originBadge(idea.origin)}</div>
     <h3>${escapeHtml(idea.title)}</h3>
     <p>${escapeHtml(idea.detail)}</p>
     ${costText(idea, currency)}
     <div class="acts">
-      <button type="button" class="btn ghost small" data-itask="${idea.id}" ${attrIf(inTasks, "disabled")}>${inTasks ? "In tasks" : "Add to tasks"}</button>
+      <button type="button" class="btn ghost small" data-itask="${escapeHtml(idea.id)}" ${attrIf(inTasks, "disabled")}>${inTasks ? "In tasks" : "Add to tasks"}</button>
       ${budgetAction}
     </div>
   </article>`;
@@ -123,7 +123,7 @@ function proposeIdeaBudget(ideaId) {
   const plan = state.plan;
   const currency = plan.brief.currency;
   const idea = plan.ideas.find((x) => x.id === ideaId);
-  const amount = Math.round(+$(`#ib-${idea.id}`).value);
+  const amount = Math.round(+$(`#ib-${escapeHtml(idea.id)}`).value);
   if (!(amount > 0)) {
     toast("Enter an amount greater than 0.", true);
     return;

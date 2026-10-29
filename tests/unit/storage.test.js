@@ -2,15 +2,15 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { PLAN_VERSION } from "../../js/core/model.js";
+import { sanePlan } from "../../js/core/plan-sanitizer.js";
 import { STORAGE_KEYS } from "../../js/services/local-store.js";
 import { state } from "../../js/services/state.js";
 import {
   allPlans,
   deleteStoredPlan,
   getPlan,
-  hiddenCounts,
+  storedPlanSummary,
   migrateV1,
-  sanePlan,
   savePlan,
   storageState,
 } from "../../js/services/storage.js";
@@ -110,12 +110,16 @@ test("newer-version and invalid entries are counted, kept, and '__proto__' ids a
   const good = weddingPlan();
   const raw = `{"${good.id}":${JSON.stringify(good)},"future":{"v":${PLAN_VERSION + 1}},"bad":{"v":2},"__proto__":{"polluted":true}}`;
   installLocalStorage({ [STORAGE_KEYS.plans]: raw });
-  assert.deepEqual(hiddenCounts(), { newer: 1, invalid: 2 });
+  const before = storedPlanSummary();
+  assert.deepEqual([before.plans.length, before.newer, before.invalid], [1, 1, 2]);
+  assert.equal(storedPlanSummary(), before, "unchanged storage reuses the cached summary");
   assert.equal(getPlan("__proto__")?.polluted, true, "returned as plain data only");
   assert.equal({}.polluted, undefined, "Object.prototype is untouched");
   assert.equal(getPlan("not a valid id!"), null);
   assert.ok(deleteStoredPlan("bad"));
-  assert.deepEqual(hiddenCounts(), { newer: 1, invalid: 1 });
+  const after = storedPlanSummary();
+  assert.notEqual(after, before, "a change in storage invalidates the cache");
+  assert.deepEqual([after.newer, after.invalid], [1, 1]);
 });
 
 test("version 1 plans are migrated once, keeping ticked tasks and recorded spend", () => {
@@ -157,4 +161,20 @@ test("version 1 plans are migrated once, keeping ticked tasks and recorded spend
   assert.equal(plan.budget[0].committed, 2500);
   migrateV1();
   assert.equal(Object.values(allPlans()).length, 1, "running again doesn't duplicate");
+});
+
+test("when saving fails even after trimming, the person is told their changes aren't stored", () => {
+  installLocalStorage({}, { failWrites: (key) => key === STORAGE_KEYS.plans });
+  state.plan = weddingPlan();
+  savePlan();
+  assert.ok(toasts.some((t) => t.isError && /Couldn't save on this device/.test(t.message)));
+  assert.equal(deleteStoredPlan(state.plan.id), false, "deleting also reports the failure");
+});
+
+test("a version 1 plan that can't be converted is left alone", () => {
+  installLocalStorage({
+    [STORAGE_KEYS.legacyPlans]: JSON.stringify({ broken: { brief: {}, plan: { budget: "nope" } } }),
+  });
+  migrateV1();
+  assert.equal(Object.keys(allPlans()).length, 0);
 });

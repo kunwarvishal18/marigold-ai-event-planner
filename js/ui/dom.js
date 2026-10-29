@@ -36,7 +36,7 @@ export function setHtml(element, html) {
  * Sets the width of every [data-width] element inside `root` from its percentage.
  * @param {ParentNode} root
  */
-export function applyWidths(root) {
+function applyWidths(root) {
   for (const element of root.querySelectorAll("[data-width]")) {
     const pct = Math.max(0, Math.min(100, Number(element.dataset.width) || 0));
     element.style.width = `${pct}%`;

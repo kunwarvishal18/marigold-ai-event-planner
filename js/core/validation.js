@@ -38,7 +38,7 @@ const cleanList = (list, maxLength, maxItems) =>
  * Reads a string field, recording an error when a required one is empty.
  * @returns {string}
  */
-export function readString(object, key, maxLength, errors, path, required = true) {
+function readString(object, key, maxLength, errors, path, required = true) {
   const text = clip(object?.[key], maxLength);
   if (required && !text) errors.push(`${path}.${key} must be a non-empty string`);
   return text;
@@ -48,7 +48,7 @@ export function readString(object, key, maxLength, errors, path, required = true
  * Reads an array field, recording an error when it's missing or too short.
  * @returns {Array} at most `max` items
  */
-export function readArray(object, key, errors, path, min, max) {
+function readArray(object, key, errors, path, min, max) {
   const list = object?.[key];
   if (!Array.isArray(list)) {
     errors.push(`${path}.${key} must be an array`);

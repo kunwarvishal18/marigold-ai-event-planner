@@ -22,7 +22,6 @@ import {
 } from "../../js/core/safety.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 
 const total = (a) => a.reduce((x, y) => x + y, 0);
 // Deterministic pseudo-random numbers so failures are reproducible.
@@ -345,17 +344,18 @@ test("escapeHtml escapes every HTML-significant character; hasOwn ignores the pr
   assert.equal(hasOwn(Object.create(null), "x"), false);
 });
 
-test("pinned jsPDF SRI hash matches the npm jspdf@2.5.1 file and the URL is the same version", () => {
-  const file = createRequire(import.meta.url).resolve("jspdf/dist/jspdf.umd.min.js");
-  const pkg = JSON.parse(
-    readFileSync(file.replace(/dist[\\/]jspdf\.umd\.min\.js$/, "package.json"), "utf8"),
-  );
-  assert.equal(
-    "sha384-" + createHash("sha384").update(readFileSync(file)).digest("base64"),
-    JSPDF_SRI,
-  );
-  assert.ok(
-    JSPDF_URL.includes(`/jspdf/${pkg.version}/`),
-    `URL must match installed version ${pkg.version}`,
-  );
+test("pinned jsPDF SRI hash matches the jsPDF fixture file, and the URL is the same version", () => {
+  const file = new URL("../fixtures/jspdf/jspdf.umd.min.js", import.meta.url);
+  const body = readFileSync(file);
+  assert.equal(`sha384-${createHash("sha384").update(body).digest("base64")}`, JSPDF_SRI);
+  const version = /\/jspdf\/(\d+\.\d+\.\d+)\//.exec(JSPDF_URL)[1];
+  assert.ok(body.toString("utf8").includes(`"${version}"`), `fixture must be jsPDF ${version}`);
+  assert.ok(Number(version.split(".")[0]) >= 4, "jsPDF 4.2.1+ fixes the 2026 advisories");
+});
+
+test("extractJSON gives up cleanly on unbalanced or broken JSON in prose", () => {
+  assert.equal(extractJSON("Here: } nothing {"), undefined);
+  assert.equal(extractJSON('Answer: {"a": 1,, } thanks'), undefined);
+  assert.equal(extractJSON("no json at all"), undefined);
+  assert.deepEqual(extractJSON('Sure!\n```json\n{"a": [1]}\n```'), { a: [1] });
 });

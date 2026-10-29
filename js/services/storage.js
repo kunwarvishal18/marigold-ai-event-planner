@@ -7,19 +7,15 @@
  */
 import { toIsoDate } from "../core/dates.js";
 import { PLAN_VERSION, buildPlan } from "../core/model.js";
-import { breakCycles } from "../core/scheduler.js";
-import { MAX_GUESTS } from "../core/constants.js";
-import { hasOwn, isNumeric, isPlainObject, safeAmount } from "../core/util.js";
+import { ID_PATTERN } from "../core/constants.js";
+import { sanePlan } from "../core/plan-sanitizer.js";
+import { hasOwn, isNumeric, isPlainObject } from "../core/util.js";
 import { STORAGE_KEYS, localStore } from "./local-store.js";
 import { state } from "./state.js";
 import { view } from "./view.js";
 
-/** Plan ids are short and URL/attribute safe. */
-export const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-
 /** Older undo snapshots are dropped when storage is full. */
 const HISTORY_KEPT_WHEN_FULL = 2;
-const MAX_HISTORY = 10;
 
 /** What the UI should tell the person about stored data. */
 export const storageState = { corrupt: false, backupKey: null, readOnly: false };
@@ -43,18 +39,29 @@ export function allPlans() {
   const raw = localStore.raw(STORAGE_KEYS.plans);
   if (raw == null || raw === "") return plans;
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = undefined;
-  }
+  const parsed = parseStored(raw);
   if (!isPlainObject(parsed)) {
     quarantine(raw);
     return plans;
   }
   for (const id of Object.keys(parsed)) plans[id] = parsed[id];
   return plans;
+}
+
+/** The last parse, reused while the stored text is unchanged. Callers never mutate its plans. */
+let parseCache = { raw: undefined, parsed: undefined };
+
+function parseStored(raw) {
+  if (raw !== parseCache.raw) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    parseCache = { raw, parsed };
+  }
+  return parseCache.parsed;
 }
 
 /**
@@ -71,7 +78,7 @@ export function getPlan(id) {
  * Replaces every stored plan.
  * @returns {boolean} false when saving is paused or storage refused the write
  */
-export function writeAll(plans) {
+function writeAll(plans) {
   if (storageState.readOnly) return false;
   return localStore.set(STORAGE_KEYS.plans, plans);
 }
@@ -104,11 +111,14 @@ export function savePlan() {
   plans[state.plan.id] = state.plan;
   let saved = writeAll(plans);
   if (!saved) {
-    for (const plan of Object.values(plans)) {
+    // Storage is full: keep only the newest undo snapshots of every plan (copies, so the cached
+    // parse of the stored text is never modified) and try once more.
+    for (const [id, plan] of Object.entries(plans)) {
       if (plan && Array.isArray(plan.history)) {
-        plan.history = plan.history.slice(0, HISTORY_KEPT_WHEN_FULL);
+        plans[id] = { ...plan, history: plan.history.slice(0, HISTORY_KEPT_WHEN_FULL) };
       }
     }
+    state.plan.history = plans[state.plan.id].history;
     saved = writeAll(plans);
   }
   if (!saved) {
@@ -122,114 +132,28 @@ export function savePlan() {
   view.renderSection("saved");
 }
 
+/** The last summary, reused while the stored text is unchanged. */
+let summaryCache = { raw: undefined, summary: null };
+
 /**
- * Counts stored entries that are kept but not shown, so the UI can say so.
- * @returns {{newer: number, invalid: number}}
+ * The plans that can be listed, plus counts of stored entries that are kept but not shown.
+ * Parsing and validating every stored plan is the costliest part of a render, so the result is
+ * cached against the raw stored text and recomputed only when storage actually changes.
+ * @returns {{plans: import("../core/model.js").Plan[], newer: number, invalid: number}}
  */
-export function hiddenCounts() {
-  let newer = 0;
-  let invalid = 0;
+export function storedPlanSummary() {
+  const raw = storageState.readOnly ? null : localStore.raw(STORAGE_KEYS.plans);
+  if (raw === summaryCache.raw && summaryCache.summary) return summaryCache.summary;
+  const summary = { plans: [], newer: 0, invalid: 0 };
   for (const plan of Object.values(allPlans())) {
-    if (plan && typeof plan === "object" && isNumeric(plan.v) && +plan.v > PLAN_VERSION) newer++;
-    else if (!sanePlan(plan)) invalid++;
+    const clean = sanePlan(plan);
+    if (clean) summary.plans.push(clean);
+    else if (isPlainObject(plan) && isNumeric(plan.v) && +plan.v > PLAN_VERSION) summary.newer++;
+    else summary.invalid++;
   }
-  return { newer, invalid };
-}
-
-const text = (value, maxLength) => {
-  if (typeof value === "string") return value.slice(0, maxLength);
-  return value == null ? "" : String(value).slice(0, maxLength);
-};
-const optionalAmount = (value) => (value == null ? null : safeAmount(value));
-const objectsIn = (list) => (Array.isArray(list) ? list.filter(isPlainObject) : []);
-
-/**
- * Validates a stored plan and returns a cleaned copy, or null if it can't be used.
- * Money becomes whole numbers in [0, MAX_AMOUNT]; task links to missing tasks or in loops are
- * dropped. Never trusts stored data: it may come from an older version or be hand-edited.
- * @param {unknown} plan
- * @returns {import("../core/model.js").Plan|null}
- */
-export function sanePlan(plan) {
-  if (!isPlainObject(plan) || plan.v !== PLAN_VERSION) return null;
-  if (typeof plan.id !== "string" || !ID_PATTERN.test(plan.id) || !isPlainObject(plan.brief)) {
-    return null;
-  }
-  if (!["budget", "tasks", "vendors", "ideas"].every((key) => Array.isArray(plan[key]))) {
-    return null;
-  }
-  const total = safeAmount(plan.brief.budget);
-  if (!total) return null;
-
-  const clean = {
-    history: [],
-    log: [],
-    chat: [],
-    runOfShow: [],
-    dayOf: { contacts: [], emergency: [], weather: [] },
-    rev: 0,
-    ...plan,
-  };
-  clean.brief = {
-    ...plan.brief,
-    budget: total,
-    guests: Math.max(1, Math.min(MAX_GUESTS, Math.round(+plan.brief.guests) || 1)),
-    name: text(plan.brief.name, 90) || "Untitled event",
-  };
-  clean.budget = plan.budget.filter(isPlainObject).map((line) => ({
-    ...line,
-    category: text(line.category, 60) || "Other",
-    amount: safeAmount(line.amount) ?? 0,
-    committed: optionalAmount(line.committed),
-  }));
-  clean.vendors = plan.vendors.filter(isPlainObject).map((vendor) => ({
-    ...vendor,
-    estimate: optionalAmount(vendor.estimate),
-    quote: optionalAmount(vendor.quote),
-    checklist: objectsIn(vendor.checklist),
-    questions: Array.isArray(vendor.questions) ? vendor.questions.map((q) => text(q, 200)) : [],
-    options: objectsIn(vendor.options),
-  }));
-  clean.ideas = plan.ideas.filter(isPlainObject).map((idea) => ({
-    ...idea,
-    costLow: optionalAmount(idea.costLow),
-    costHigh: optionalAmount(idea.costHigh),
-  }));
-  clean.tasks = cleanTasks(plan.tasks);
-
-  for (const key of ["history", "log", "chat", "runOfShow"]) {
-    if (!Array.isArray(clean[key])) clean[key] = [];
-  }
-  clean.history = clean.history.slice(0, MAX_HISTORY);
-  if (!isPlainObject(clean.dayOf)) clean.dayOf = { contacts: [], emergency: [], weather: [] };
-  for (const key of ["contacts", "emergency", "weather"]) {
-    if (!Array.isArray(clean.dayOf[key])) clean.dayOf = { ...clean.dayOf, [key]: [] };
-  }
-  if (!Number.isInteger(clean.rev)) clean.rev = 0;
-  return clean;
-}
-
-/** Keeps tasks with string ids; drops dependency links that are unknown, self-links or loops. */
-function cleanTasks(tasks) {
-  const valid = tasks.filter((task) => isPlainObject(task) && typeof task.id === "string");
-  const ids = new Set(valid.map((task) => task.id));
-  const graph = valid.map((task) => ({
-    key: task.id,
-    dependsOn: [
-      ...new Set(
-        (Array.isArray(task.deps) ? task.deps : []).filter(
-          (dep) => typeof dep === "string" && dep !== task.id && ids.has(dep),
-        ),
-      ),
-    ],
-  }));
-  breakCycles(graph);
-  return valid.map((task, i) => ({
-    ...task,
-    title: text(task.title, 160),
-    offset: Math.max(0, Math.round(+task.offset) || 0),
-    deps: graph[i].dependsOn,
-  }));
+  summary.plans.sort((a, b) => b.updatedAt - a.updatedAt);
+  summaryCache = { raw, summary };
+  return summary;
 }
 
 /**

@@ -79,7 +79,7 @@ export function fillForm(brief) {
  * Reads the brief from the form (not yet validated).
  * @returns {import("../core/model.js").Brief}
  */
-export function readForm() {
+function readForm() {
   const numberIn = (selector) => {
     const value = $(selector).value.trim();
     return value === "" ? null : +value;
@@ -100,7 +100,7 @@ export function readForm() {
 }
 
 /** Hides every inline form error. */
-export function clearErrors() {
+function clearErrors() {
   for (const field of CHECKED_FIELDS) {
     $(`#e-${field}`).hidden = true;
     $(`#f-${field}`).removeAttribute("aria-invalid");
@@ -113,7 +113,7 @@ export function clearErrors() {
  * @param {boolean} editing true when editing an open plan (its past date is still allowed)
  * @returns {boolean} true when the brief is valid
  */
-export function validateBrief(brief, editing) {
+function validateBrief(brief, editing) {
   const errors = briefErrors(brief, editing);
   clearErrors();
   for (const [field, message] of Object.entries(errors)) {
@@ -159,14 +159,14 @@ export function submitBrief() {
 }
 
 /** Validates the form and generates a plan (or a template plan without Claude). */
-export function requestGenerate(fresh) {
+function requestGenerate(fresh) {
   if (state.busy.gen) return;
   const brief = readForm();
   if (validateBrief(brief, state.mode === "edit")) generate(brief, fresh);
 }
 
 /** Validates the form and creates a template plan. */
-export function requestTemplate() {
+function requestTemplate() {
   const brief = readForm();
   if (validateBrief(brief, false)) createTemplate(brief);
 }

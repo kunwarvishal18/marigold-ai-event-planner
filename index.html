@@ -192,7 +192,7 @@
             <div class="plan-head">
               <div class="badges" id="badges"></div>
               <span class="eyebrow" id="pType"></span>
-              <h2 id="pTitle"></h2>
+              <h2 id="pTitle" tabindex="-1"></h2>
               <p class="summary" id="pSummary"></p>
               <div class="toolbar">
                 <button type="button" class="btn ghost small" id="undoBtn" disabled>Undo</button>
@@ -245,12 +245,14 @@
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-overview"
               aria-labelledby="tab-overview"
             ></section>
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-budget"
               aria-labelledby="tab-budget"
               hidden
@@ -258,6 +260,7 @@
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-timeline"
               aria-labelledby="tab-timeline"
               hidden
@@ -265,6 +268,7 @@
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-vendors"
               aria-labelledby="tab-vendors"
               hidden
@@ -272,6 +276,7 @@
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-ideas"
               aria-labelledby="tab-ideas"
               hidden
@@ -279,6 +284,7 @@
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-eventday"
               aria-labelledby="tab-eventday"
               hidden
@@ -286,6 +292,7 @@
             <section
               class="panel"
               role="tabpanel"
+              tabindex="-1"
               id="panel-chat"
               aria-labelledby="tab-chat"
               hidden
@@ -298,7 +305,13 @@
                 Ask a question, or ask for a change. Changes come back as a proposal you can review,
                 apply or reject. Nothing in your budget changes without your approval.
               </p>
-              <div class="msgs" id="msgs" aria-live="polite"></div>
+              <div
+                class="msgs"
+                id="msgs"
+                role="log"
+                aria-live="polite"
+                aria-label="Conversation"
+              ></div>
               <div class="suggest" id="suggest"></div>
               <form class="ask" id="askForm">
                 <label class="sr" for="askInput">Message the co-planner</label

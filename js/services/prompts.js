@@ -15,7 +15,7 @@ const MAX_TASKS_IN_CONTEXT = 25;
 const CHAT_HISTORY_SENT = 8;
 
 /** Rules appended to every prompt. */
-export const SAFETY =
+const SAFETY =
   `${DATA_RULE} Never invent real business names, phone numbers, ratings, reviews, availability ` +
   "or live weather. Any cost is an approximate estimate in the event's currency, not a quote.";
 
@@ -29,7 +29,7 @@ const daysUntil = (brief) => {
  * @param {import("../core/model.js").Brief} brief
  * @returns {string}
  */
-export function briefText(brief) {
+function briefText(brief) {
   const daysLeft = daysUntil(brief);
   const when = daysLeft != null ? ` (${daysLeft} days from today, ${toIsoDate(today())})` : "";
   return [

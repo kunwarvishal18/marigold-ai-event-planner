@@ -25,24 +25,52 @@ function suggestions(plan) {
   ];
 }
 
+/** Identifies a message across renders, so unchanged messages are never re-inserted. */
+const messageKey = (message, planId) =>
+  `${planId}:${message.at || 0}:${message.role}:${message.text.length}`;
+
+const messageHtml = (message, key) =>
+  `<div class="msg ${escapeHtml(message.role)}" data-key="${escapeHtml(key)}">${escapeHtml(message.text)}</div>`;
+
+const THINKING =
+  '<div class="msg assistant" data-thinking><span class="progress"><span class="spinner"></span>Thinking and checking the numbers…</span></div>';
+
+/**
+ * Updates the conversation, a role="log" live region. New messages are appended to what is
+ * already there, so screen readers announce only the new reply rather than the whole conversation.
+ * The list is rebuilt only when it no longer starts with what's on screen (another plan, or older
+ * messages trimmed).
+ */
+function renderMessages(box, plan, claudeOn, busy) {
+  box.querySelector("[data-thinking]")?.remove();
+  const messages = plan.chat.slice(-MESSAGES_SHOWN);
+  const keys = messages.map((message) => messageKey(message, plan.id));
+  const shown = [...box.querySelectorAll("[data-key]")].map((element) => element.dataset.key);
+  const isPrefix = shown.length > 0 && shown.every((key, i) => key === keys[i]);
+
+  if (!messages.length) {
+    const hint = claudeOn
+      ? "Try one of the suggestions below."
+      : "The co-planner needs Claude. Everything else works in template mode.";
+    setHtml(box, `<div class="msg note">${hint}</div>`);
+  } else if (isPrefix) {
+    const added = messages.slice(shown.length).map((message, i) => {
+      return messageHtml(message, keys[shown.length + i]);
+    });
+    box.insertAdjacentHTML("beforeend", added.join(""));
+  } else {
+    setHtml(box, messages.map((message, i) => messageHtml(message, keys[i])).join(""));
+  }
+  if (busy) box.insertAdjacentHTML("beforeend", THINKING);
+  box.scrollTop = box.scrollHeight;
+}
+
 /** Renders the conversation and the controls that depend on Claude being available. */
 export function renderChat() {
   const plan = state.plan;
   const claudeOn = isClaudeOn();
   const busy = !!state.busy.chat;
-  const box = $("#msgs");
-  let messages = plan.chat.length
-    ? plan.chat
-        .slice(-MESSAGES_SHOWN)
-        .map((message) => `<div class="msg ${message.role}">${escapeHtml(message.text)}</div>`)
-        .join("")
-    : `<div class="msg note">${claudeOn ? "Try one of the suggestions below." : "The co-planner needs Claude. Everything else works in template mode."}</div>`;
-  if (busy) {
-    messages +=
-      '<div class="msg assistant"><span class="progress"><span class="spinner"></span>Thinking and checking the numbers…</span></div>';
-  }
-  setHtml(box, messages);
-  box.scrollTop = box.scrollHeight;
+  renderMessages($("#msgs"), plan, claudeOn, busy);
 
   const suggest = $("#suggest");
   setHtml(

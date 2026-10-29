@@ -64,6 +64,7 @@ Logic often needs to tell the page something ("show this toast", "re-render the 
 | `core/risks.js`           | Budget, timeline, vendor and event risk rules; health score                   |
 | `core/advisor.js`         | "Do next" ranking with reasons                                                |
 | `core/model.js`           | Plan data model, `buildPlan`, `newVendor`                                     |
+| `core/plan-sanitizer.js`  | `sanePlan`: rebuilds stored plans and undo snapshots from allow-listed values |
 | `core/proposal.js`        | `makeProposal` (apply a change to a copy and check it), `diffPlans`           |
 | `core/validation.js`      | Schemas for every Claude reply                                                |
 | `core/safety.js`          | `extractJSON`, reply size cap, data fencing for prompts, jsPDF SRI pin        |
@@ -80,7 +81,16 @@ Logic often needs to tell the page something ("show this toast", "re-render the 
 | `actions/assistant.js`    | Generate, optimise, more ideas, AI risk review, co-planner chat               |
 | `actions/history.js`      | Show/apply/reject proposals, direct edits (`commit`), undo                    |
 | `actions/plans.js`        | Open, create, review details, delete, sample plan                             |
+| `ui/focus.js`             | Keeps keyboard focus on the edited control across re-renders (WCAG 2.4.3)     |
 | `ui/*.js`                 | One module per area: form, saved plans, proposal panel, each tab, export menu |
+
+## Accessibility
+
+- Tabs follow the WAI-ARIA tabs pattern (arrow keys, Home, End). Panels and the plan title are programmatic focus targets (`tabindex="-1"`).
+- Every re-render goes through `preserveFocus()` (`ui/focus.js`), so keyboard users stay on the control they edited; if it disappears (an applied proposal, a removed row), focus moves to its panel or the plan title, never to the page body.
+- Form errors are linked with `aria-describedby` and announced with `role="alert"`; the toast switches between `status` and `alert`; the conversation is a `role="log"` region that only receives new messages.
+- A skip link, visible focus rings, `prefers-reduced-motion`, `prefers-contrast` and `forced-colors` support. Status is never shown by colour alone.
+- axe-core scans every tab in light and dark mode in the browser tests.
 
 ## Request flow for a Claude call
 
@@ -157,9 +167,9 @@ The bundler gives each ES module its own function scope that returns its exports
 
 `index.html` sets a Content-Security-Policy: scripts only from the page itself and cdnjs (for jsPDF), styles from the page and Google Fonts, no plugins, no form posts, no fetch or XHR connections, and no `<base>` changes. **There is no `'unsafe-inline'`.** The markup never uses `style=""` attributes; dynamic sizes (progress bars) are set through the CSSOM from `data-width` attributes, which the policy allows. For `dist/marigold-standalone.html` the build replaces `'self'` in `script-src` and `style-src` with the SHA-256 hashes of the inlined script and stylesheet. The Artifact build leaves the policy out because claude.ai sets its own.
 
-jsPDF is loaded with a Subresource Integrity hash (`JSPDF_SRI` in `core/safety.js`), `crossorigin="anonymous"` and `referrerpolicy="no-referrer"`, in both builds. `scripts/verify-sri.mjs` runs in CI and fails the build if the live cdnjs file no longer matches the pinned hash.
+jsPDF 4.2.1 is loaded with a Subresource Integrity hash (`JSPDF_SRI` in `core/safety.js`), `crossorigin="anonymous"` and `referrerpolicy="no-referrer"`, in both builds. `scripts/verify-sri.mjs` runs in CI and fails the build if the live cdnjs file no longer matches the pinned hash.
 
-All dynamic text reaches the page through `escapeHtml()` before it is placed in markup.
+All dynamic values, including ids and enum fields, reach the page through `escapeHtml()` before they are placed in markup. Plans read from storage and undo snapshots are first rebuilt by `core/plan-sanitizer.js`, and AI proposals can set the event type, currency and start time only to allow-listed values. See [SECURITY.md](SECURITY.md) for the threat model.
 
 ## Efficiency
 
@@ -167,3 +177,7 @@ All dynamic text reaches the page through `escapeHtml()` before it is placed in 
 - jsPDF is loaded lazily, only when a PDF is exported.
 - Claude replies over 200,000 characters are rejected before parsing. Chat history sent to Claude is limited to the last 8 messages; prompts include at most 25 pending tasks.
 - Undo history keeps 10 snapshots and falls back to 2 if browser storage is full.
+- `Intl` number and date formatters are created once and reused; a render formats hundreds of values.
+- Stored plans are parsed and validated once per change: the parsed data and the saved-plans summary are cached against the raw stored text.
+- The co-planner conversation is updated by appending new messages instead of rebuilding the list.
+- Measured with `npm run bench` (41 saved plans): a task tick takes 18.7 ms median, down from 28.2 ms. The remaining cost is writing all plans to one `localStorage` key, which a per-plan storage layout would reduce; that would need a data migration and isn't done yet.

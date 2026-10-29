@@ -76,8 +76,8 @@ docs/screenshots/     screenshots captured from the running app
 
 - HTML, CSS and vanilla JavaScript (ES2024, native ES modules, JSDoc types). No runtime dependencies or framework.
 - Claude through the claude.ai Artifact runtime (`sample` and `downloads` capabilities). No API key is used or stored anywhere.
-- jsPDF 2.5.1, loaded from cdnjs only when a PDF is exported, pinned with a Subresource Integrity (SHA-384) hash and `crossorigin="anonymous"`.
-- Dev only: Node.js 22+, ESLint, Prettier, Playwright, axe-core, and a local jsPDF copy for offline tests.
+- jsPDF 4.2.1, loaded from cdnjs only when a PDF is exported, pinned with a Subresource Integrity (SHA-384) hash and `crossorigin="anonymous"`.
+- Dev only: Node.js 22+, ESLint, Prettier, Playwright and axe-core. A pinned copy of the jsPDF file in `tests/fixtures/` lets PDF tests run offline.
 
 ## Install
 
@@ -119,25 +119,32 @@ npm test               # lint + build check + unit tests with coverage + browser
 npm run lint           # ESLint (quality limits and layer rules)
 npm run format:check   # Prettier
 npm run test:unit      # node:test unit tests
-npm run test:coverage  # unit tests; fails below 90% lines, 80% branches, 85% functions
+npm run test:coverage  # unit tests; fails below 95% lines, 85% branches, 95% functions
+npm run test:mutation  # breaks 8 safety-critical rules one at a time; the unit tests must notice
+npm run audit          # npm audit, failing on high or critical advisories
+npm run bench          # times one task tick with 41 saved plans (needs Playwright)
 npm run test:e2e       # Playwright; MG_TARGET=modular or MG_TARGET=standalone to run one
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the Prettier check and `npm test` on every push to `main` and on pull requests.
+GitHub Actions (`.github/workflows/ci.yml`) runs the dependency audit, the Prettier check, the jsPDF hash check against cdnjs, the mutation check and `npm test` on every push to `main` and on pull requests.
 
-### Latest results (2026-10-29)
+### Latest results (2026-10-29, local run)
 
-| Check                                                                  | Result                                                                                                                                                           |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ESLint (including layer rules)                                         | No problems                                                                                                                                                      |
-| Prettier                                                               | All files formatted                                                                                                                                              |
-| Unit tests (`node:test`)                                               | 82 / 82 passed                                                                                                                                                   |
-| Unit test coverage of `core/`, `services/`, `actions/`                 | 94% lines, 83% branches, 92% functions                                                                                                                           |
-| Browser tests, modular app                                             | 86 / 86 passed                                                                                                                                                   |
-| Browser tests, single-file build                                       | 86 / 86 passed                                                                                                                                                   |
-| axe-core accessibility scan (WCAG 2.2 A/AA), every tab, light and dark | No violations                                                                                                                                                    |
-| GitHub Actions CI                                                      | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40828856533) on the v3.3.0 commit (format, SRI, lint, coverage, browser tests) |
-| Manual checklist with real Claude in the live Artifact (13 items)      | All passed, run by the project owner                                                                                                                             |
+| Check                                                                  | Result                                                     |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------- |
+| ESLint (quality limits and layer rules)                                | No problems                                                |
+| Prettier                                                               | All files formatted                                        |
+| `build:check` (dist matches source, no import cycles)                  | Passed                                                     |
+| Unit tests (`node:test`)                                               | 111 / 111 passed, none skipped                             |
+| Unit test coverage of `core/`, `services/`, `actions/`                 | 99.2% lines, 88.2% branches, 98.2% functions               |
+| Mutation spot-check (`npm run test:mutation`)                          | 8 / 8 deliberately broken rules caught                     |
+| Browser tests, modular app                                             | 111 / 111 passed                                           |
+| Browser tests, single-file build                                       | 111 / 111 passed                                           |
+| axe-core accessibility scan (WCAG 2.2 A/AA), every tab, light and dark | No violations                                              |
+| Task tick with 41 saved plans (`npm run bench`)                        | 18.7 ms median, down from 28.2 ms (same machine, same run) |
+| Manual checklist with real Claude in the live Artifact (13 items)      | All passed, run by the project owner on 2026-10-28         |
+
+GitHub Actions results for each commit are on the [Actions page](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions). See [TESTING.md](TESTING.md) for the environment and exact commands.
 
 Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`), so they check Marigold's own logic and safety handling. The behaviour with real Claude (generation, co-planner edits with approval, prompt-injection attempt, optimizer, ideas, AI risk review, exports, stale replies and phone-sized screens) was checked by hand in the live Artifact. See [TESTING.md](TESTING.md) for every check, what is not verified, and the manual checklist.
 
@@ -154,10 +161,14 @@ Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-cl
 
 - **No secrets:** no API keys or credentials anywhere in the code. Claude access comes from the viewer's own claude.ai session.
 - **Content-Security-Policy:** no `'unsafe-inline'` for scripts or styles. The hosted and single-file builds only run Marigold's own script and stylesheet (the single-file build allows each by SHA-256 hash) plus jsPDF from cdnjs, with fonts from Google Fonts; no plugins, no form posts, and no fetch or XHR connections (`connect-src 'none'`). A browser test confirms an injected script is blocked. The Artifact build uses claude.ai's own policy.
-- **Subresource Integrity:** the jsPDF script tag carries a pinned SHA-384 hash, so the browser refuses it if the CDN file is ever changed. The hash is the hash of the npm `jspdf@2.5.1` file (checked by a unit test), CI checks it against the live cdnjs file on every run, and a browser test confirms a tampered copy is blocked and PDF export fails safely with an error message.
+- **Subresource Integrity:** the jsPDF script tag carries a pinned SHA-384 hash, so the browser refuses it if the CDN file is ever changed. The hash is the hash of the jsPDF 4.2.1 release file kept in `tests/fixtures/jspdf/` (checked by a unit test), CI checks it against the live cdnjs file on every run, and a browser test confirms a tampered copy is blocked and PDF export fails safely with an error message.
 - **No backend:** all data stays in the browser's localStorage on the user's device.
 - **Approval before change:** Claude can only propose edits. Nothing is applied without the user pressing _Apply_, and every applied change can be undone.
-- **Untrusted AI output:** size-capped, parsed defensively, validated against schemas, retried once, and rendered only as escaped text (never as HTML).
+- **Untrusted AI output:** size-capped, parsed defensively, validated against schemas, retried once, and rendered only as escaped text (never as HTML). Fields such as currency, event type and start time are accepted only from allow-lists.
+- **Untrusted stored data:** every plan loaded from browser storage, and every undo snapshot, is rebuilt field by field from allow-listed values before use.
+
+The full threat model, controls and known limitations are in [SECURITY.md](SECURITY.md).
+
 - **Prompt injection:** user text and plan data are fenced in data tags with tag-closing attempts neutralised; the deeper defence is that code validates every result and the user approves every change.
 - **Storage safety:** unreadable data is backed up before anything is written; newer-version plans are kept untouched; loaded data is sanitised; prototype-safe lookups.
 - **Exports:** CSV text cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return are prefixed with `'` so spreadsheets don't run them as formulas.

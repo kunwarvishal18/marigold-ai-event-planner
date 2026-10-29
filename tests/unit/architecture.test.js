@@ -53,3 +53,32 @@ test("every relative import in scripts/ and tests/ points at a file that exists"
   }
   assert.deepEqual(missing, []);
 });
+
+test("every export is used by another module or a test (no dead public API)", () => {
+  const sources = new Map();
+  const collect = (dir) => {
+    for (const entry of readdirSync(new URL(`../../${dir}/`, import.meta.url), {
+      withFileTypes: true,
+    })) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) collect(path);
+      else if (/\.m?js$/.test(entry.name)) {
+        sources.set(path, readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"));
+      }
+    }
+  };
+  collect("js");
+  collect("tests/unit");
+  collect("tests/e2e");
+  const unused = [];
+  for (const [path, source] of sources) {
+    if (!path.startsWith("js/")) continue;
+    for (const [, name] of source.matchAll(/^export (?:async )?(?:function|const|class) (\w+)/gm)) {
+      const usedElsewhere = [...sources].some(
+        ([other, text]) => other !== path && new RegExp(`\\b${name}\\b`).test(text),
+      );
+      if (!usedElsewhere) unused.push(`${path}: ${name}`);
+    }
+  }
+  assert.deepEqual(unused, []);
+});

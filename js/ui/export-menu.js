@@ -64,7 +64,7 @@ function exportErrorMessage(error, kind) {
  * @param {"pdf"|"budget"|"vendors"|"timeline"} kind
  * @param {HTMLButtonElement} button shows "Preparing…" while busy
  */
-export async function exportFile(kind, button) {
+async function exportFile(kind, button) {
   if (state.busy.exp) return;
   state.busy.exp = true;
   const label = button.textContent;

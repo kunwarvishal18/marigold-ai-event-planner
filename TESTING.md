@@ -5,13 +5,15 @@ This file records what was actually run, the results, and what is **not** verifi
 ## Commands
 
 ```bash
-npm install            # dev dependencies: playwright, axe-core, jspdf (for offline PDF tests)
+npm install            # dev dependencies: eslint, playwright, axe-core
 npm test               # lint + build:check + test:coverage + test:e2e
 npm run lint           # ESLint (flat config in eslint.config.js, includes layer rules)
 npm run format:check   # Prettier
 npm run build:check    # fails if dist/ doesn't match the source (and on any import cycle)
 npm run test:unit      # node:test on core/, services/ and actions/ (no browser, no Claude)
-npm run test:coverage  # the same, failing below 90% lines, 80% branches, 85% functions
+npm run test:coverage  # the same, failing below 95% lines, 85% branches, 95% functions
+npm run test:mutation  # breaks 8 safety-critical rules one at a time; the unit tests must catch each
+npm run bench          # times one task tick with 41 saved plans (Playwright)
 npm run test:e2e       # Playwright on BOTH builds; MG_TARGET=modular|standalone for one
 MG_REPORT=tests/results/e2e.json npm run test:e2e   # also write a JSON report
 node scripts/screenshots.mjs                         # regenerate README screenshots
@@ -19,18 +21,23 @@ node scripts/screenshots.mjs                         # regenerate README screens
 
 ## Executed results
 
-Run on 2026-10-29 in a Linux container: Node v22, Playwright 1.63.0 with Chromium, axe-core 4.12.1 (a newer, stricter release than the pinned 4.10.2), ESLint 10.1, Prettier 3.8.1. GitHub Actions (`.github/workflows/ci.yml`) runs the Prettier check and the same `npm test` on every push, using ESLint 9 from the lockfile. The v3.3.0 commit (1ec140c, 2026-10-29) passed every step: https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40828856533. The first CI run, on commit 4f8873a (2026-10-28), also passed: https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583
+Run on 2026-10-29 in a Linux container: Node v22, Playwright 1.63.0 with Chromium, axe-core 4.12.1 (a newer, stricter release than the pinned 4.10.2), ESLint 10.1, Prettier 3.8.1. The container could not reach the npm registry or cdnjs, so `npm audit` and `scripts/verify-sri.mjs` were not run locally; CI runs both on every push. GitHub Actions uses ESLint 9 and axe-core 4.10.2 from the lockfile.
 
-| Suite                                                 | Result                                     |
-| ----------------------------------------------------- | ------------------------------------------ |
-| ESLint                                                | No problems                                |
-| Prettier                                              | All files formatted                        |
-| `build:check` (dist matches source, no import cycles) | Passed                                     |
-| Unit tests (`node:test`)                              | **82 / 82 passed**                         |
-| Unit test coverage (`core/`, `services/`, `actions/`) | **94% lines, 83% branches, 92% functions** |
-| Browser tests, modular app over HTTP                  | **86 / 86 passed**                         |
-| Browser tests, single-file build over `file://`       | **86 / 86 passed**                         |
-| `npm test` exit code                                  | 0                                          |
+Commands, in order: `npm run lint`, `npx prettier --check .`, `npm run build:check`, `npm run test:coverage`, `npm run test:mutation`, `MG_REPORT=e2e.json npm run test:e2e`, `npm run bench`.
+
+| Suite                                                 | Result                                              |
+| ----------------------------------------------------- | --------------------------------------------------- |
+| ESLint                                                | No problems                                         |
+| Prettier                                              | All files formatted                                 |
+| `build:check` (dist matches source, no import cycles) | Passed                                              |
+| Unit tests (`node:test`)                              | **111 / 111 passed** (0 failed, 0 skipped, 0 todo)  |
+| Unit test coverage (`core/`, `services/`, `actions/`) | **99.2% lines, 88.2% branches, 98.2% functions**    |
+| Mutation spot-check                                   | **8 / 8 mutants caught**                            |
+| Browser tests, modular app over HTTP                  | **111 / 111 passed** (0 skipped)                    |
+| Browser tests, single-file build over `file://`       | **111 / 111 passed** (0 skipped)                    |
+| Benchmark: task tick with 41 saved plans              | 18.7 ms median (was 28.2 ms before this change set) |
+
+Earlier CI runs for reference: v3.3.0 (commit 1ec140c) https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40828856533 and the first run (commit 4f8873a) https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583.
 
 These numbers come from the run itself. If you change code, rerun `npm test` rather than relying on this table.
 
@@ -38,11 +45,15 @@ These numbers come from the run itself. If you change code, rerun `npm test` rat
 
 The browser tests replace the claude.ai runtime with `tests/e2e/mock-claude.js`, a **mock** that returns canned JSON (and deliberately broken JSON, rate-limit errors, circular dependencies, oversized replies, slow replies, HTML-injection strings and arithmetic slips). The tests therefore verify Marigold's own handling: validation, retries, maths, scheduling, approvals, undo, persistence, rendering and safety. **They say nothing about the quality of real Claude answers.**
 
-PDF export is tested with jsPDF 2.5.1 from `node_modules`, served in place of the cdnjs URL, because cdnjs is not reachable from the test environment. The served copy has CORS headers, as the integrity-checked `crossorigin` load requires. A second check serves a tampered copy and confirms the browser blocks it, no PDF is saved and an error alert is shown.
+PDF export is tested with the pinned jsPDF 4.2.1 file in `tests/fixtures/jspdf/`, served in place of the cdnjs URL, because cdnjs is not reachable from the test environment. A unit test checks that file against the pinned SRI hash, and CI checks the hash against the live cdnjs file. The served copy has CORS headers, as the integrity-checked `crossorigin` load requires. A second check serves a tampered copy and confirms the browser blocks it, no PDF is saved and an error alert is shown.
 
 ### Unit tests
 
-Files: `core.test.js` and `advisor.test.js` (pure logic), `rules.test.js` (risks, validators, prompts, formatting), `proposal.test.js` (proposals and diffs), `storage.test.js` (persistence with an in-memory `localStorage`), `services.test.js` (Claude client retries, prompt fencing, CSV export, apply/undo), `assistant.test.js` (every AI action with a fake Claude, including stale replies) and `architecture.test.js` (no import cycles, imports only point down a layer, no browser APIs in `core/`). Shared fixtures are in `helpers.js`.
+Files: `core.test.js` and `advisor.test.js` (pure logic), `rules.test.js` (risks, validators, prompts, formatting), `proposal.test.js` (proposals and diffs), `storage.test.js` (persistence with an in-memory `localStorage`), `services.test.js` (Claude client retries, prompt fencing, CSV export, apply/undo), `assistant.test.js` (every AI action with a fake Claude, including stale replies), `sanitizer.test.js` (stored plans and undo snapshots rebuilt from allow-lists; allow-listed proposal fields), `edge-cases.test.js` (PDF builder with a recording jsPDF, the integrity-checked loader, failing storage, late and duplicate requests) and `architecture.test.js` (no import cycles, imports only point down a layer, no browser APIs in `core/`, every relative import exists). Shared fixtures are in `helpers.js`.
+
+### Browser journeys (tests/e2e/journeys.mjs)
+
+Run on both builds after the original suites: adding, validating, removing and restoring a timeline task; adding a vendor type, comparing and choosing an option, payment and checklist updates, and refusing an impossible quote; the event-day run of show, contacts and checklists; turning an idea into a task and into a budget line through an approved proposal; keyboard focus staying on the edited control after a re-render; an approved AI proposal carrying HTML in currency, time and event type; stored data carrying HTML in ids, priorities, statuses, chat roles and AI risks; and chat replies appended to a `role="log"` region without re-announcing earlier messages.
 
 Highlights from the original suites:
 

@@ -6,7 +6,7 @@
 import { daysBetween, parseIsoDate, today } from "../core/dates.js";
 import { formatMoney } from "../core/format.js";
 import { buildPlan } from "../core/model.js";
-import { clip, normalizeName, sum, uid } from "../core/util.js";
+import { clip, normalizeName, plural, sum, uid } from "../core/util.js";
 import {
   validateBudgetOpt,
   validateChat,
@@ -31,8 +31,6 @@ import { createTemplate, logEntryFor, openPlan } from "./plans.js";
 const MAX_CHAT_MESSAGE = 1200;
 const MAX_CHAT_KEPT = 60;
 const MAX_NOTE = 120;
-
-const plural = (count, singular, pluralForm) => (count > 1 ? pluralForm : singular);
 
 /**
  * Generates a plan with Claude, or creates a template plan when Claude isn't available.

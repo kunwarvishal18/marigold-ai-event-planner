@@ -2,6 +2,7 @@
  * @file Changing the open plan: proposals (preview → approve → apply), direct edits, and undo.
  * Every structural change is undoable and logged.
  */
+import { sanePlan } from "../core/plan-sanitizer.js";
 import { corePlan, makeProposal } from "../core/proposal.js";
 import { deepClone } from "../core/util.js";
 import { state } from "../services/state.js";
@@ -53,13 +54,13 @@ export function showProposal(proposal) {
  * @param {string} text
  * @param {"you"|"ai"|"rule"|"template"} [origin]
  */
-export function logEntry(text, origin) {
+function logEntry(text, origin) {
   state.plan.log.unshift({ text, origin: origin || "you", at: Date.now() });
   state.plan.log = state.plan.log.slice(0, MAX_LOG);
 }
 
 /** Saves an undo snapshot of the open plan. */
-export function pushHistory(title) {
+function pushHistory(title) {
   state.plan.history.unshift({ title, at: Date.now(), snap: corePlan(state.plan) });
   state.plan.history = state.plan.history.slice(0, MAX_HISTORY);
 }
@@ -118,7 +119,15 @@ export function undo() {
   const entry = state.plan.history[0];
   if (!entry) return;
   const current = state.plan;
-  const snapshot = deepClone(entry.snap);
+  // Snapshots come back from storage, so they are validated like any stored plan.
+  const snapshot = sanePlan({ ...deepClone(entry.snap), id: current.id });
+  if (!snapshot) {
+    current.history = current.history.slice(1);
+    savePlan();
+    view.render();
+    view.toast("Can't undo: the saved snapshot couldn't be read, so it was discarded.", true);
+    return;
+  }
 
   const orphan = current.budget.find(
     (line) => (line.committed || 0) > 0 && !snapshot.budget.some((old) => old.id === line.id),

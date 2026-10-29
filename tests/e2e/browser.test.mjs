@@ -9,6 +9,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { serve } from "../../scripts/serve.mjs";
+import { journeys } from "./journeys.mjs";
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -25,7 +26,7 @@ function load(name) {
 const { chromium } = load("playwright");
 const MOCK = fs.readFileSync(path.join(ROOT, "tests/e2e/mock-claude.js"), "utf8");
 // The app loads jsPDF from cdnjs at export time. Tests serve the same version from node_modules so they work offline.
-const JSPDF = require.resolve("jspdf/dist/jspdf.umd.min.js");
+const JSPDF = path.join(ROOT, "tests/fixtures/jspdf/jspdf.umd.min.js");
 const AXE = require.resolve("axe-core/axe.min.js");
 const SHOTS = fs.mkdtempSync(path.join(os.tmpdir(), "marigold-shots-"));
 
@@ -1096,6 +1097,9 @@ async function hardening(b, URL, ok) {
   );
   ok("No page errors (accessibility run)", !errs.length, errs.join(" | "));
   await ctx.close();
+
+  // 7. User journeys and regression checks (timeline, vendors, event day, ideas, focus, injection).
+  await journeys(fresh, ok);
 }
 
 async function main() {

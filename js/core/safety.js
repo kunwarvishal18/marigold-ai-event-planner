@@ -4,11 +4,12 @@
 
 /**
  * jsPDF is loaded from cdnjs only when a PDF is exported. The browser checks the file against this
- * Subresource Integrity hash (SHA-384 of the npm jspdf@2.5.1 dist file) and refuses to run anything
- * else. CI re-checks the hash against the live CDN file: scripts/verify-sri.mjs.
+ * Subresource Integrity hash (SHA-384 of the jsPDF 4.2.1 release file, kept as a test fixture in
+ * tests/fixtures/jspdf/) and refuses to run anything else. CI re-checks the hash against the live
+ * CDN file: scripts/verify-sri.mjs. 4.2.1 includes the fixes for the 2026 jsPDF advisories.
  */
-export const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-export const JSPDF_SRI = "sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk";
+export const JSPDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js";
+export const JSPDF_SRI = "sha384-qovJwSBbRDPP5cEjCp8S0UP66wrvnjaa60XMOGzTNanrThcrGfXfnZkvgY8N1KT3";
 
 /** Replies longer than this are rejected before parsing, to bound memory and CPU use. */
 export const MAX_REPLY_CHARS = 200_000;
@@ -48,7 +49,7 @@ export function extractJSON(text) {
  * to treat the contents as data only. The real safeguards are still in code: strict validators,
  * exact budget maths, and the user's approval before any change is applied.
  */
-export const DATA_TAGS = ["event_brief", "plan_data", "conversation", "user_message", "user_note"];
+const DATA_TAGS = ["event_brief", "plan_data", "conversation", "user_message", "user_note"];
 
 const DATA_TAG_PATTERN = new RegExp(`<\\/?\\s*(${DATA_TAGS.join("|")})\\b[^>]*>`, "gi");
 

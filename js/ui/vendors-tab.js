@@ -29,12 +29,12 @@ const selectOptions = (values, selected) =>
  * The editable fields of one vendor card.
  * @returns {string}
  */
-export function vendorFields(vendor, plan, sched) {
+function vendorFields(vendor, plan, sched) {
   const id = vendor.id;
   const lineOptions = plan.budget
     .map(
       (line) =>
-        `<option value="${line.id}" ${attrIf(vendor.lineId === line.id, "selected")}>${escapeHtml(line.category)}</option>`,
+        `<option value="${escapeHtml(line.id)}" ${attrIf(vendor.lineId === line.id, "selected")}>${escapeHtml(line.category)}</option>`,
     )
     .join("");
   const allocation = allocationFor(plan, vendor);
@@ -42,17 +42,17 @@ export function vendorFields(vendor, plan, sched) {
   const estimateHint =
     allocation != null ? `Budget line: ${Math.round(allocation)}` : "Your estimate";
   return `<div class="vgrid">
-    <div><label for="vn-${id}">Vendor name</label><input id="vn-${id}" data-vf="name" value="${escapeHtml(vendor.name)}" placeholder="Not chosen yet"></div>
-    <div><label for="vc-${id}">Contact</label><input id="vc-${id}" data-vf="contact" value="${escapeHtml(vendor.contact)}" placeholder="Phone or email"></div>
-    <div><label for="vs-${id}">Booking status</label><select id="vs-${id}" data-vf="status">${selectOptions(VENDOR_STATUSES, vendor.status)}</select></div>
-    <div><label for="vp-${id}">Payment</label><select id="vp-${id}" data-vf="payment">${selectOptions(PAYMENT_STATES, vendor.payment)}</select></div>
-    <div><label for="ve-${id}">Estimated cost</label><input id="ve-${id}" type="number" min="0" data-vf="estimate" value="${vendor.estimate ?? ""}" placeholder="${estimateHint}"></div>
-    <div><label for="vq-${id}">Quoted cost</label><input id="vq-${id}" type="number" min="0" data-vf="quote" value="${vendor.quote ?? ""}" placeholder="From the vendor"></div>
-    <div><label for="vd-${id}">Book by</label><input id="vd-${id}" type="date" data-vf="dueFixed" value="${vendor.dueFixed || (due ? toIsoDate(due) : "")}"></div>
-    <div><label for="va-${id}">Event-day arrival</label><input id="va-${id}" type="time" data-vf="arrival" value="${escapeHtml(vendor.arrival)}"></div>
-    <div><label for="vl-${id}">Budget category</label><select id="vl-${id}" data-vf="lineId"><option value="">None</option>${lineOptions}</select></div>
+    <div><label for="vn-${escapeHtml(id)}">Vendor name</label><input id="vn-${escapeHtml(id)}" data-vf="name" value="${escapeHtml(vendor.name)}" placeholder="Not chosen yet"></div>
+    <div><label for="vc-${escapeHtml(id)}">Contact</label><input id="vc-${escapeHtml(id)}" data-vf="contact" value="${escapeHtml(vendor.contact)}" placeholder="Phone or email"></div>
+    <div><label for="vs-${escapeHtml(id)}">Booking status</label><select id="vs-${escapeHtml(id)}" data-vf="status">${selectOptions(VENDOR_STATUSES, vendor.status)}</select></div>
+    <div><label for="vp-${escapeHtml(id)}">Payment</label><select id="vp-${escapeHtml(id)}" data-vf="payment">${selectOptions(PAYMENT_STATES, vendor.payment)}</select></div>
+    <div><label for="ve-${escapeHtml(id)}">Estimated cost</label><input id="ve-${escapeHtml(id)}" type="number" min="0" data-vf="estimate" value="${vendor.estimate ?? ""}" placeholder="${estimateHint}"></div>
+    <div><label for="vq-${escapeHtml(id)}">Quoted cost</label><input id="vq-${escapeHtml(id)}" type="number" min="0" data-vf="quote" value="${vendor.quote ?? ""}" placeholder="From the vendor"></div>
+    <div><label for="vd-${escapeHtml(id)}">Book by</label><input id="vd-${escapeHtml(id)}" type="date" data-vf="dueFixed" value="${escapeHtml(vendor.dueFixed || (due ? toIsoDate(due) : ""))}"></div>
+    <div><label for="va-${escapeHtml(id)}">Event-day arrival</label><input id="va-${escapeHtml(id)}" type="time" data-vf="arrival" value="${escapeHtml(vendor.arrival)}"></div>
+    <div><label for="vl-${escapeHtml(id)}">Budget category</label><select id="vl-${escapeHtml(id)}" data-vf="lineId"><option value="">None</option>${lineOptions}</select></div>
   </div>
-  <div><label for="vno-${id}">Notes</label><textarea id="vno-${id}" data-vf="notes" rows="2">${escapeHtml(vendor.notes)}</textarea></div>`;
+  <div><label for="vno-${escapeHtml(id)}">Notes</label><textarea id="vno-${escapeHtml(id)}" data-vf="notes" rows="2">${escapeHtml(vendor.notes)}</textarea></div>`;
 }
 
 function cardSummary(vendor, plan, sched, money) {
@@ -73,9 +73,9 @@ function cardSummary(vendor, plan, sched, money) {
   }
   const name = vendor.name ? escapeHtml(vendor.name) : "<i>Vendor not chosen yet</i>";
   return `<summary>
-    <h3>${escapeHtml(vendor.category)} <span class="status s${stage}">${vendor.status}</span>${vendor.critical ? '<span class="badge">critical</span>' : ""}</h3>
+    <h3>${escapeHtml(vendor.category)} <span class="status s${stage}">${escapeHtml(vendor.status)}</span>${vendor.critical ? '<span class="badge">critical</span>' : ""}</h3>
     <span class="note">${checksDone}/${vendor.checklist.length} checks</span>
-    <div class="vsub"><span>${name}</span><span class="${late ? "overdue" : ""}">Book by ${due ? formatShortDate(due) : "—"}${late ? " · late" : ""}</span>${cost}<span>${vendor.payment}</span></div>
+    <div class="vsub"><span>${name}</span><span class="${late ? "overdue" : ""}">Book by ${due ? formatShortDate(due) : "—"}${late ? " · late" : ""}</span>${cost}<span>${escapeHtml(vendor.payment)}</span></div>
   </summary>`;
 }
 
@@ -83,11 +83,11 @@ function checklistSection(vendor) {
   const items = vendor.checklist
     .map(
       (item) =>
-        `<li><input type="checkbox" id="vk-${item.id}" data-vcheck="${item.id}" ${attrIf(item.done, "checked")}><label for="vk-${item.id}" class="plain-label ${item.done ? "done" : ""}">${escapeHtml(item.text)}</label></li>`,
+        `<li><input type="checkbox" id="vk-${escapeHtml(item.id)}" data-vcheck="${escapeHtml(item.id)}" ${attrIf(item.done, "checked")}><label for="vk-${escapeHtml(item.id)}" class="plain-label ${item.done ? "done" : ""}">${escapeHtml(item.text)}</label></li>`,
     )
     .join("");
   return `<div><span class="lbl">Checklist</span><ul class="checks">${items}</ul>
-    <form class="inline-add mt-sm" data-vadd="${vendor.id}"><label class="sr" for="vadd-${vendor.id}">New checklist item</label><input id="vadd-${vendor.id}" placeholder="Add checklist item" maxlength="160"><button class="btn ghost small">Add</button></form>
+    <form class="inline-add mt-sm" data-vadd="${escapeHtml(vendor.id)}"><label class="sr" for="vadd-${escapeHtml(vendor.id)}">New checklist item</label><input id="vadd-${escapeHtml(vendor.id)}" placeholder="Add checklist item" maxlength="160"><button class="btn ghost small">Add</button></form>
   </div>`;
 }
 
@@ -101,18 +101,18 @@ function optionsSection(vendor, money) {
             <td>${escapeHtml(option.contact)}</td>
             <td class="num">${isNumeric(option.quote) ? money(option.quote) : "—"}</td>
             <td>${escapeHtml(option.notes)}</td>
-            <td><div class="btnrow"><button type="button" class="btn ghost small" data-choose="${option.id}">Choose</button><button type="button" class="iconbtn" data-delopt="${option.id}" aria-label="Remove ${escapeHtml(option.name)}">Remove</button></div></td>
+            <td><div class="btnrow"><button type="button" class="btn ghost small" data-choose="${escapeHtml(option.id)}">Choose</button><button type="button" class="iconbtn" data-delopt="${escapeHtml(option.id)}" aria-label="Remove ${escapeHtml(option.name)}">Remove</button></div></td>
           </tr>`,
         )
         .join("")}</tbody></table></div>`
     : '<p class="hint">No options yet. Add each vendor you are considering to compare quotes side by side.</p>';
   return `<div><span class="lbl">Compare options</span>
     ${table}
-    <form class="vgrid mt-md" data-optadd="${id}">
-      <div><label for="on-${id}">Option name</label><input id="on-${id}" maxlength="80" required></div>
-      <div><label for="oc-${id}">Contact</label><input id="oc-${id}" maxlength="80"></div>
-      <div><label for="oq-${id}">Quote</label><input id="oq-${id}" type="number" min="0"></div>
-      <div><label for="oo-${id}">Notes</label><input id="oo-${id}" maxlength="140"></div>
+    <form class="vgrid mt-md" data-optadd="${escapeHtml(id)}">
+      <div><label for="on-${escapeHtml(id)}">Option name</label><input id="on-${escapeHtml(id)}" maxlength="80" required></div>
+      <div><label for="oc-${escapeHtml(id)}">Contact</label><input id="oc-${escapeHtml(id)}" maxlength="80"></div>
+      <div><label for="oq-${escapeHtml(id)}">Quote</label><input id="oq-${escapeHtml(id)}" type="number" min="0"></div>
+      <div><label for="oo-${escapeHtml(id)}">Notes</label><input id="oo-${escapeHtml(id)}" maxlength="140"></div>
       <div class="align-end"><button class="btn ghost small">Add option</button></div>
     </form>
   </div>`;
@@ -124,9 +124,9 @@ function vendorCard(vendor, plan, sched, money) {
     : "";
   const remove =
     vendor.origin === "you"
-      ? `<button type="button" class="btn danger small align-start" data-delv="${vendor.id}">Remove this vendor</button>`
+      ? `<button type="button" class="btn danger small align-start" data-delv="${escapeHtml(vendor.id)}">Remove this vendor</button>`
       : "";
-  return `<details class="vendor" data-vid="${vendor.id}" ${attrIf(state.openV.has(vendor.id), "open")}>
+  return `<details class="vendor" data-vid="${escapeHtml(vendor.id)}" ${attrIf(state.openV.has(vendor.id), "open")}>
     ${cardSummary(vendor, plan, sched, money)}
     <div class="vbody">
       ${vendorFields(vendor, plan, sched)}

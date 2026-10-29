@@ -8,9 +8,6 @@ import { analyze } from "../core/risks.js";
 import { JSPDF_SRI, JSPDF_URL } from "../core/safety.js";
 import { isNumeric, sum } from "../core/util.js";
 
-/** CSV export kinds. */
-export const CSV_KINDS = ["budget", "vendors", "timeline"];
-
 /**
  * One CSV cell. Text that a spreadsheet would run as a formula (=, +, -, @, tab, CR) is prefixed
  * with an apostrophe (CSV injection protection); cells with quotes, commas or newlines are quoted.

@@ -1,5 +1,6 @@
-# Runs formatting and lint checks, the build check, unit tests with coverage thresholds and browser
-# tests (both builds) on every push and pull request.
+# Runs the dependency audit, formatting and lint checks, the jsPDF SRI check, a mutation spot-check,
+# the build check, unit tests with coverage thresholds and browser tests (both builds, including
+# axe-core accessibility scans) on every push and pull request.
 name: CI
 
 on:
@@ -21,12 +22,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Audit dependencies for high or critical advisories
+        run: npm audit --audit-level=high
       - name: Check formatting (Prettier)
         run: npm run format:check
       - name: Verify the jsPDF CDN file matches the pinned SRI hash
         run: node scripts/verify-sri.mjs
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
+      - name: Mutation spot-check (tests must catch deliberately broken rules)
+        run: npm run test:mutation
       - name: Lint, build check, unit tests with coverage, browser tests
         run: npm test
         env:

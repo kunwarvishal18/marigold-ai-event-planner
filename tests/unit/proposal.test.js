@@ -148,3 +148,60 @@ test("corePlan drops history, chat and log but keeps the plan itself", () => {
   assert.equal(core.log, undefined);
   assert.equal(core.budget.length, plan.budget.length);
 });
+
+test("explicit allocations below committed spend, new categories and dropped links", () => {
+  const plan = weddingPlan();
+  plan.budget[0].committed = 900_000;
+  const blocked = makeProposal(
+    plan,
+    spec({ budget: [{ category: plan.budget[0].category, amount: 100, locked: true }] }),
+  );
+  assert.match(blocked.blocked, /can't be applied without cutting commitments/);
+
+  const fresh = weddingPlan();
+  const venue = fresh.vendors.find((v) => /venue/i.test(v.category));
+  const lines = fresh.budget
+    .filter((line) => line.id !== venue.lineId)
+    .map((line) => ({ category: line.category, amount: line.amount }));
+  lines.push({ category: "Fireworks", amount: 5000, note: "Finale" });
+  const proposal = makeProposal(fresh, spec({ budget: lines }, { origin: "rule" }));
+  assert.equal(allocated(proposal.after), fresh.brief.budget);
+  assert.ok(proposal.after.budget.some((l) => l.category === "Fireworks" && l.note === "Finale"));
+  const relinked = proposal.after.vendors.find((v) => v.id === venue.id).lineId;
+  assert.ok(proposal.after.budget.some((l) => l.id === relinked) || relinked === null);
+  assert.ok(
+    proposal.diff.budget.some((row) => row.removed) && proposal.diff.budget.some((r) => r.added),
+  );
+});
+
+test("without a contingency line, Claude's slip is spread across categories and disclosed", () => {
+  const plan = weddingPlan();
+  plan.budget = plan.budget.filter((line) => !/contingen/i.test(line.category));
+  const lines = plan.budget.map((line) => ({ category: line.category, amount: line.amount }));
+  const proposal = makeProposal(plan, spec({ budget: lines }));
+  assert.equal(allocated(proposal.after), plan.brief.budget);
+  assert.ok(proposal.warnings.some((w) => /across categories in proportion/.test(w)));
+});
+
+test("venue capacity and new ideas from a proposal", () => {
+  const plan = weddingPlan();
+  const proposal = makeProposal(
+    plan,
+    spec({
+      brief: { venueCapacity: 450 },
+      addIdeas: [
+        { title: plan.ideas[0].title, detail: "dup" },
+        { title: "Lantern walk", detail: "Evening walk", costLow: 900, costHigh: 100 },
+        { detail: "no title" },
+      ],
+    }),
+  );
+  assert.equal(proposal.after.brief.venueCapacity, 450);
+  const added = proposal.after.ideas.filter((i) => !plan.ideas.some((x) => x.id === i.id));
+  assert.deepEqual(
+    added.map((i) => [i.title, i.costLow, i.costHigh, i.origin]),
+    [["Lantern walk", 100, 900, "ai"]],
+  );
+  const cleared = makeProposal(plan, spec({ brief: { venueCapacity: null } }));
+  assert.equal(cleared.after.brief.venueCapacity, null);
+});

@@ -17,7 +17,7 @@ const CRITICAL_TASKS_SHOWN = 8;
  * Time left until the event starts, e.g. "12 days", "1d 4h 30m", "Today", "Event passed".
  * @returns {string}
  */
-export function countdownText() {
+function countdownText() {
   if (!state.plan) return "";
   const { brief } = state.plan;
   const eventDate = parseIsoDate(brief.date);
@@ -45,12 +45,12 @@ function checklistCard(plan, key, title) {
   const items = plan.dayOf[key]
     .map(
       (item) =>
-        `<li><input type="checkbox" id="dc-${item.id}" data-dchk="${key}:${item.id}" ${attrIf(item.done, "checked")}><label for="dc-${item.id}" class="plain-label ${item.done ? "done" : ""}">${escapeHtml(item.text)}</label></li>`,
+        `<li><input type="checkbox" id="dc-${escapeHtml(item.id)}" data-dchk="${escapeHtml(key)}:${escapeHtml(item.id)}" ${attrIf(item.done, "checked")}><label for="dc-${escapeHtml(item.id)}" class="plain-label ${item.done ? "done" : ""}">${escapeHtml(item.text)}</label></li>`,
     )
     .join("");
   return `<div class="card"><h2>${title}</h2>
     <ul class="checks">${items}</ul>
-    <form class="inline-add" data-dadd="${key}"><label class="sr" for="da-${key}">Add item</label><input id="da-${key}" maxlength="140" placeholder="Add item"><button class="btn ghost small">Add</button></form>
+    <form class="inline-add" data-dadd="${escapeHtml(key)}"><label class="sr" for="da-${escapeHtml(key)}">Add item</label><input id="da-${escapeHtml(key)}" maxlength="140" placeholder="Add item"><button class="btn ghost small">Add</button></form>
   </div>`;
 }
 
@@ -59,7 +59,7 @@ function summaryCards(plan, sched) {
   const doneCount = plan.tasks.filter((task) => task.done).length;
   const donePct = plan.tasks.length ? (doneCount / plan.tasks.length) * 100 : 0;
   const when = sched.ev
-    ? formatDate(sched.ev) + (brief.time ? ` at ${brief.time}` : "")
+    ? formatDate(sched.ev) + (brief.time ? ` at ${escapeHtml(brief.time)}` : "")
     : "Add a date in Event details";
   const critical = plan.tasks
     .filter((task) => !task.done && task.priority === "high")
@@ -89,11 +89,11 @@ function runOfShowCard(plan) {
     .slice()
     .sort((a, b) => a.time.localeCompare(b.time))
     .map(
-      (row) => `<div class="sched-row" data-rid="${row.id}">
-        <label class="sr" for="rt-${row.id}">Time</label><input id="rt-${row.id}" type="time" data-rf="time" value="${escapeHtml(row.time)}">
-        <label class="sr" for="ri-${row.id}">Item</label><input id="ri-${row.id}" data-rf="item" value="${escapeHtml(row.item)}">
-        <label class="sr" for="ro-${row.id}">Owner</label><input class="owner" id="ro-${row.id}" data-rf="owner" value="${escapeHtml(row.owner)}" placeholder="Owner">
-        <button type="button" class="iconbtn" data-rdel="${row.id}" aria-label="Remove ${escapeHtml(row.item)}">Remove</button>
+      (row) => `<div class="sched-row" data-rid="${escapeHtml(row.id)}">
+        <label class="sr" for="rt-${escapeHtml(row.id)}">Time</label><input id="rt-${escapeHtml(row.id)}" type="time" data-rf="time" value="${escapeHtml(row.time)}">
+        <label class="sr" for="ri-${escapeHtml(row.id)}">Item</label><input id="ri-${escapeHtml(row.id)}" data-rf="item" value="${escapeHtml(row.item)}">
+        <label class="sr" for="ro-${escapeHtml(row.id)}">Owner</label><input class="owner" id="ro-${escapeHtml(row.id)}" data-rf="owner" value="${escapeHtml(row.owner)}" placeholder="Owner">
+        <button type="button" class="iconbtn" data-rdel="${escapeHtml(row.id)}" aria-label="Remove ${escapeHtml(row.item)}">Remove</button>
       </div>`,
     )
     .join("");
@@ -124,7 +124,7 @@ function arrivalsAndContacts(plan) {
   const vendorContacts = plan.vendors.filter((vendor) => vendor.contact);
   const people = plan.dayOf.contacts.map(
     (contact) =>
-      `<li><span><b>${escapeHtml(contact.name)}</b> · ${escapeHtml(contact.role)}</span><span>${escapeHtml(contact.phone)} <button type="button" class="iconbtn" data-cdel="${contact.id}" aria-label="Remove ${escapeHtml(contact.name)}">Remove</button></span></li>`,
+      `<li><span><b>${escapeHtml(contact.name)}</b> · ${escapeHtml(contact.role)}</span><span>${escapeHtml(contact.phone)} <button type="button" class="iconbtn" data-cdel="${escapeHtml(contact.id)}" aria-label="Remove ${escapeHtml(contact.name)}">Remove</button></span></li>`,
   );
   const vendors = vendorContacts.map(
     (vendor) =>

@@ -60,7 +60,7 @@ function taskRow({ task, due }, sched, titleOf) {
   else if (task.origin === "you") origin = "<span>Added by you</span>";
   const remove =
     task.origin === "you" && !task.done
-      ? `<button type="button" class="linkbtn" data-deltask="${task.id}">Remove</button>`
+      ? `<button type="button" class="linkbtn" data-deltask="${escapeHtml(task.id)}">Remove</button>`
       : "";
   const dueText = due
     ? `<span class="${overdue ? "overdue" : ""}">${overdue ? "Overdue · " : ""}${formatShortDate(due)}</span>`
@@ -71,10 +71,10 @@ function taskRow({ task, due }, sched, titleOf) {
     lead = `<div class="note">${daysBefore === 0 ? "Event day" : `${daysBefore}d before`}</div>`;
   }
   return `<div class="task ${task.done ? "done" : ""}">
-    <input type="checkbox" id="tk-${task.id}" data-task="${task.id}" ${attrIf(task.done, "checked")}>
+    <input type="checkbox" id="tk-${escapeHtml(task.id)}" data-task="${escapeHtml(task.id)}" ${attrIf(task.done, "checked")}>
     <div>
-      <label for="tk-${task.id}" class="t-title plain-label">${escapeHtml(task.title)}</label>
-      <div class="meta"><span class="pri ${task.priority}">${task.priority}</span>${after}${origin}${remove}</div>
+      <label for="tk-${escapeHtml(task.id)}" class="t-title plain-label">${escapeHtml(task.title)}</label>
+      <div class="meta"><span class="pri ${escapeHtml(task.priority)}">${escapeHtml(task.priority)}</span>${after}${origin}${remove}</div>
     </div>
     <div class="due">${dueText}${lead}</div>
   </div>`;
@@ -83,7 +83,10 @@ function taskRow({ task, due }, sched, titleOf) {
 function addTaskForm(plan) {
   const options = plan.tasks
     .filter((task) => !task.done)
-    .map((task) => `<option value="${task.id}">${escapeHtml(clip(task.title, 50))}</option>`)
+    .map(
+      (task) =>
+        `<option value="${escapeHtml(task.id)}">${escapeHtml(clip(task.title, 50))}</option>`,
+    )
     .join("");
   return `<form class="card" id="addTask"><h2>Add a task</h2>
     <div class="row2">
@@ -114,7 +117,7 @@ export function renderTimeline(analysis) {
 
   const filterButtons = FILTERS.map(
     ([key, label]) =>
-      `<button type="button" data-filter="${key}" aria-pressed="${state.filter === key}">${label}</button>`,
+      `<button type="button" data-filter="${escapeHtml(key)}" aria-pressed="${state.filter === key}">${label}</button>`,
   ).join("");
   const phases = rows.length
     ? groupByPhase(rows)

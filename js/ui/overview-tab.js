@@ -19,7 +19,7 @@ const LOG_ENTRIES_SHOWN = 8;
  * @param {string} band "On track" | "Needs attention" | "At risk"
  * @returns {string} SVG markup
  */
-export function dial(score, band) {
+function dial(score, band) {
   const circumference = 2 * Math.PI * DIAL_RADIUS;
   const color = BAND_COLORS[band] || "var(--rose)";
   const filled = ((score / 100) * circumference).toFixed(1);
@@ -34,14 +34,14 @@ export function dial(score, band) {
  * @param {import("../core/risks.js").Risk} risk
  * @returns {string}
  */
-export function riskItem(risk) {
+function riskItem(risk) {
   const aiBadge = risk.source === "ai" ? '<span class="badge ai">AI insight</span>' : "";
   const tabName = risk.tab === "eventday" ? "Event day" : risk.tab;
   const link = risk.tab
-    ? ` <button type="button" class="linkbtn" data-goto="${risk.tab}">Open ${tabName}</button>`
+    ? ` <button type="button" class="linkbtn" data-goto="${escapeHtml(risk.tab)}">Open ${tabName}</button>`
     : "";
-  return `<li class="risk ${risk.sev}">
-    <div class="risk-top"><span class="sev ${risk.sev}">${risk.sev}</span><b>${escapeHtml(risk.title)}</b>${aiBadge}</div>
+  return `<li class="risk ${escapeHtml(risk.sev)}">
+    <div class="risk-top"><span class="sev ${escapeHtml(risk.sev)}">${escapeHtml(risk.sev)}</span><b>${escapeHtml(risk.title)}</b>${aiBadge}</div>
     <p>${escapeHtml(risk.why)}</p>
     <p class="act">Do this: ${escapeHtml(risk.action)}${link}</p>
   </li>`;
@@ -114,7 +114,7 @@ function doNextSection(plan, sched) {
       const due = action.due
         ? `<span class="${overdue ? "overdue" : "note"}">${overdue ? "Overdue · " : ""}${formatShortDate(action.due)}</span>`
         : "";
-      return `<li><span><button type="button" class="linkbtn" data-goto="${action.tab}">${escapeHtml(action.title)}</button><small class="note">Why: ${escapeHtml(action.why.join(", "))}</small></span>${due}</li>`;
+      return `<li><span><button type="button" class="linkbtn" data-goto="${escapeHtml(action.tab)}">${escapeHtml(action.title)}</button><small class="note">Why: ${escapeHtml(action.why.join(", "))}</small></span>${due}</li>`;
     });
     list = `<ol class="mini donext" aria-labelledby="doNextTitle">${items.join("")}</ol>`;
   } else {

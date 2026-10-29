@@ -13,6 +13,7 @@ import { renderChat } from "./chat-tab.js";
 import { $, $$, setHtml } from "./dom.js";
 import { renderEventDay } from "./eventday-tab.js";
 import { renderExport } from "./export-menu.js";
+import { preserveFocus } from "./focus.js";
 import { renderForm } from "./form.js";
 import { renderIdeas } from "./ideas-tab.js";
 import { renderOverview } from "./overview-tab.js";
@@ -113,8 +114,12 @@ function renderTabs(analysis) {
   for (const name of TABS) $(`#panel-${name}`).hidden = name !== state.tab;
 }
 
-/** Re-renders the whole page from state. */
+/** Re-renders the whole page from state, keeping keyboard focus in place. */
 export function renderAll() {
+  preserveFocus(renderPage);
+}
+
+function renderPage() {
   const plan = state.plan;
   $("#layout").classList.toggle("has-plan", !!plan);
   $("#welcome").hidden = !!plan;
@@ -138,12 +143,14 @@ export function renderAll() {
  * @param {"form"|"saved"|"proposal"|"overview"|"budget"|"ideas"|"chat"} section
  */
 export function renderSection(section) {
-  if (section === "form") renderForm();
-  else if (section === "saved") renderSaved();
-  else if (section === "proposal") renderProposal();
-  else if (state.plan && Object.hasOwn(PANEL_RENDERERS, section)) {
-    PANEL_RENDERERS[section](analyze(state.plan));
-  }
+  preserveFocus(() => {
+    if (section === "form") renderForm();
+    else if (section === "saved") renderSaved();
+    else if (section === "proposal") renderProposal();
+    else if (state.plan && Object.hasOwn(PANEL_RENDERERS, section)) {
+      PANEL_RENDERERS[section](analyze(state.plan));
+    }
+  });
 }
 
 /**
@@ -152,6 +159,7 @@ export function renderSection(section) {
  * @param {{focus?: boolean}} [options] move keyboard focus to the tab
  */
 export function selectTab(name, { focus = false } = {}) {
+  if (!TABS.includes(name)) return;
   state.tab = name;
   renderAll();
   if (focus) $(`#tab-${name}`).focus();

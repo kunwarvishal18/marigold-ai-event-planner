@@ -130,7 +130,7 @@ export function renderProposal() {
         "Tasks added",
         diff.tasksAdded.map(
           (task) =>
-            `${escapeHtml(task.title)} <span class="pri ${task.priority}">${task.priority}</span>`,
+            `${escapeHtml(task.title)} <span class="pri ${escapeHtml(task.priority)}">${escapeHtml(task.priority)}</span>`,
         ),
       )}
       ${itemList(
