@@ -19,7 +19,7 @@ node scripts/screenshots.mjs                         # regenerate README screens
 
 ## Executed results
 
-Run on 2026-10-29 in a Linux container: Node v22, Playwright 1.63.0 with Chromium, axe-core 4.12.1 (a newer, stricter release than the pinned 4.10.2), ESLint 10.1, Prettier 3.8.1. GitHub Actions (`.github/workflows/ci.yml`) runs the same `npm test` on every push. Its first run, on commit 4f8873a (2026-10-28), passed: https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583
+Run on 2026-10-29 in a Linux container: Node v22, Playwright 1.63.0 with Chromium, axe-core 4.12.1 (a newer, stricter release than the pinned 4.10.2), ESLint 10.1, Prettier 3.8.1. GitHub Actions (`.github/workflows/ci.yml`) runs the Prettier check and the same `npm test` on every push, using ESLint 9 from the lockfile. The v3.3.0 commit (1ec140c, 2026-10-29) passed every step: https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40828856533. The first CI run, on commit 4f8873a (2026-10-28), also passed: https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583
 
 | Suite                                                 | Result                                     |
 | ----------------------------------------------------- | ------------------------------------------ |

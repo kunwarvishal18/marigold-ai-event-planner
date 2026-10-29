@@ -127,17 +127,17 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the Prettier check and `npm tes
 
 ### Latest results (2026-10-29)
 
-| Check                                                                  | Result                                                                                                          |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| ESLint (including layer rules)                                         | No problems                                                                                                     |
-| Prettier                                                               | All files formatted                                                                                             |
-| Unit tests (`node:test`)                                               | 82 / 82 passed                                                                                                  |
-| Unit test coverage of `core/`, `services/`, `actions/`                 | 94% lines, 83% branches, 92% functions                                                                          |
-| Browser tests, modular app                                             | 86 / 86 passed                                                                                                  |
-| Browser tests, single-file build                                       | 86 / 86 passed                                                                                                  |
-| axe-core accessibility scan (WCAG 2.2 A/AA), every tab, light and dark | No violations                                                                                                   |
-| GitHub Actions CI                                                      | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40638882583) on its first run |
-| Manual checklist with real Claude in the live Artifact (13 items)      | All passed, run by the project owner                                                                            |
+| Check                                                                  | Result                                                                                                                                                           |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ESLint (including layer rules)                                         | No problems                                                                                                                                                      |
+| Prettier                                                               | All files formatted                                                                                                                                              |
+| Unit tests (`node:test`)                                               | 82 / 82 passed                                                                                                                                                   |
+| Unit test coverage of `core/`, `services/`, `actions/`                 | 94% lines, 83% branches, 92% functions                                                                                                                           |
+| Browser tests, modular app                                             | 86 / 86 passed                                                                                                                                                   |
+| Browser tests, single-file build                                       | 86 / 86 passed                                                                                                                                                   |
+| axe-core accessibility scan (WCAG 2.2 A/AA), every tab, light and dark | No violations                                                                                                                                                    |
+| GitHub Actions CI                                                      | [Passed](https://github.com/kunwarvishal18/marigold-ai-event-planner/actions/runs/40828856533) on the v3.3.0 commit (format, SRI, lint, coverage, browser tests) |
+| Manual checklist with real Claude in the live Artifact (13 items)      | All passed, run by the project owner                                                                                                                             |
 
 Automated browser tests use a **mock** of the Claude runtime (`tests/e2e/mock-claude.js`), so they check Marigold's own logic and safety handling. The behaviour with real Claude (generation, co-planner edits with approval, prompt-injection attempt, optimizer, ideas, AI risk review, exports, stale replies and phone-sized screens) was checked by hand in the live Artifact. See [TESTING.md](TESTING.md) for every check, what is not verified, and the manual checklist.
 
